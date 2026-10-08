@@ -134,14 +134,18 @@ struct VectorNetwork {
 
 | Operation | Approach | Crates |
 | --- | --- | --- |
-| Booleans (live and baked) | Curve-native sweep line, so results stay Béziers | `linesweeper` (kurbo-native); `i_overlay` as the fallback for degenerate input, with curve refitting |
-| Shape Builder | Arrange every selected outline into one planar graph; find the faces with their winding numbers; hit-test faces and edges under the drag; union the picked faces (Alt: delete them, or delete edges) | `linesweeper`'s topology, `omavec-geom` |
-| Offset Path | Offset each segment (kurbo's cubic offset or arc-polyline offset), join with miter/round/bevel, remove self-intersections, then fit back to few cubics | `kurbo`, `cavalier_contours`, `kurbo::fit_to_bezpath_opt` |
-| Outline Stroke | Expand the stroke exactly (caps, joins, dashes, inside/outside align by boolean against the fill) | `kurbo::stroke`, booleans |
-| Variable width | Sample the width profile, offset both sides by half the local width, cap, then fit | `omavec-geom` |
-| Envelope / warp | Map points through a warp (arc, bulge, flag…) or a mesh (Coons patch), subdividing segments until the mapped curve is within tolerance, then fit | `omavec-geom`; lib2geom as the reference |
+| Booleans (live and baked) | Curve-native sweep line, so results stay Béziers; pieces refitted to few anchors | `vectorcraft-pathops` (on `linesweeper`); `i_overlay` only if it fails on degenerate input |
+| Shape Builder | Arrange every selected outline into one planar graph; find the faces with their winding numbers; hit-test faces and edges under the drag; union the picked faces (Alt: delete them, or delete edges) | `vectorcraft-pathops` (`shape_builder`, `region_at`, `merge_regions`) |
+| Offset Path | Fill ∪ stroke of twice the distance (outset) or fill − stroke (inset), normalised and refitted | `vectorcraft-pathops` (`offset_path`); `cavalier_contours` if large offsets need it |
+| Outline Stroke | Expand the stroke exactly (caps, joins, dashes, inside/outside align by boolean against the fill) | `vectorcraft-pathops` (`outline_stroke`), dashes ported from `vectorcraft-effects` |
+| Variable width | Sample the width profile, offset both sides by half the local width, join at corners, cap | Ported from `vectorcraft-effects` (`stroke/width.rs`) into `omavec-geom` |
+| Envelope / warp | Map points through a warp (arc, bulge, flag…) or a mesh (Coons patch), subdividing segments until the mapped curve is within tolerance, then fit | Warp styles ported from `vectorcraft-effects` (`warp.rs`); meshes in `omavec-geom` |
 | Scissors / knife | Split segments at a point or along a drawn path; knife splits regions | `kurbo` intersections |
 | Snapping and hit tests | R-tree of node and segment bounds; snap to points, edges, midpoints, centres, angles, pixel grid | `rstar`, `kurbo::ParamCurveNearest` |
+
+`vectorcraft-pathops` works on `vectorcraft_geom::PathData` (subpaths of
+anchors). Vector networks convert to it at the boundary and results
+convert back; see [ROADMAP.md](ROADMAP.md), "Borrowing from VectorCraft".
 
 Every operation is a pure function from geometry to geometry, so live
 modifiers can be cached by input hash and evaluated in parallel with
@@ -185,6 +189,10 @@ engine document ──► display list ──► omavec-render ──► vello::
 - **Known gap:** vello has limited support for blur filters. Shadows and
   blurs on arbitrary shapes may need our own wgpu pass (render the node to
   a texture, blur it, composite it). Phase 0 checks this.
+- **The alternative:** VectorCraft renders its canvas with `vello_cpu` on a
+  worker thread and only composites on the GPU, with blurs, shadows and
+  glows as `vello_cpu` filter layers. Phase 0 measures both and picks one;
+  the diagram above assumes vello on the GPU.
 
 ### Undo
 
@@ -293,6 +301,7 @@ GPL-3.0.
 | `cavalier_contours`, `i_overlay` | Polyline offsetting; robust polygon booleans as a fallback | Dependencies |
 | `usvg`, `svg2pdf` | SVG import, PDF export | Dependencies |
 | `kiwi-schema` | Decoding `.fig` files | Dependency |
+| VectorCraft (MIT OR Apache-2.0) | Booleans, Shape Builder, offset, outline stroke, simplify; width profiles, warps, dashes; the `vello_cpu` canvas and filter-layer effects; tool, SVG and command patterns | `vectorcraft-geom` and `vectorcraft-pathops` as dependencies; effect modules ported with a source note; the rest read. See ROADMAP.md, "Borrowing from VectorCraft" |
 | Graphite (Apache-2.0) | Its Bézier-path boolean library and `bezier-rs`; how it caches node evaluation and bridges documents to vello | Read; take `bezier-rs` if it beats kurbo for something |
 | Inkscape / lib2geom (LGPL-2.1 or MPL-1.1) | Edge cases: self-intersections, curve extrema, envelope warps, live path effects | Read as a reference; port algorithms, not code |
 | Penpot (MPL-2.0) | How auto layout maps to flex/grid, and the component/variant/override data model | Read as a reference |
@@ -303,21 +312,26 @@ GPL-3.0.
 
 1. **Blurs and shadows in vello.** If vello can't blur arbitrary shapes
    yet, effects need our own render-to-texture passes, which costs
-   complexity and per-frame time. Phase 0 spike.
+   complexity and per-frame time. Mitigation: VectorCraft's `vello_cpu`
+   canvas already draws them; Phase 0 decides between the two.
 2. **Robustness of curve booleans.** `linesweeper` is young. Shape Builder
    and live booleans have to survive coincident edges, tangencies and tiny
-   slivers. Mitigation: fuzz tests against `i_overlay`, and a fallback that
-   flattens, runs the polygon boolean and refits.
-3. **The .fig format changes.** Figma changes the schema, but every file
+   slivers. Mitigation: `vectorcraft-pathops` wraps it with refitting,
+   property tests and regression tests from a shipping app; our own fuzz
+   tests on vector networks; `i_overlay` as a last resort.
+3. **Depending on VectorCraft.** It is young and moves fast, and its API
+   can change under us. Mitigation: pin to a commit, depend on only its two
+   leaf crates, and vendor them if upgrades get painful.
+4. **The .fig format changes.** Figma changes the schema, but every file
    carries its own schema, which helps. Mitigation: fixture files from real
    documents, a version gate, and a report of what was dropped.
-4. **Scope.** Figma and Illustrator are decades of work. Mitigation: two
+5. **Scope.** Figma and Illustrator are decades of work. Mitigation: two
    intermediate releases (logos, then screens) you actually switch to, and
    a roadmap that keeps every phase usable.
-5. **Canvas text editing.** IME, selection and cursor movement on a
+6. **Canvas text editing.** IME, selection and cursor movement on a
    transformed canvas are fiddly and egui can't help. Mitigation: build on
    parley's editor; keep v1 text single-style.
-6. **GPU compatibility.** vello relies on compute shaders. Omapix already
+7. **GPU compatibility.** vello relies on compute shaders. Omapix already
    runs wgpu on NVIDIA under Hyprland, so the risk is low; `vello_hybrid`
    or `vello_cpu` are the fallbacks.
 
@@ -335,4 +349,6 @@ GPL-3.0.
 
 ## Licensing
 
-GPL-3.0-or-later, like Omapix and Omacull.
+GPL-3.0-or-later, like Omapix and Omacull. Code taken from VectorCraft
+(MIT OR Apache-2.0) names its source in a header comment, and `NOTICE`
+carries VectorCraft's copyright and licence.

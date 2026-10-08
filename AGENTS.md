@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Omavec is a local-first vector design app for Omarchy: Figma's frames, auto layout and components plus Illustrator's logo tools (Shape Builder, Offset Path, Outline Stroke, width profiles, envelope distort). It is designed to match Figma muscle memory and feel native to Omarchy. Sibling apps: Omapix (raster, `michaelrubi/omapix`) and Omacull (culling, `michaelrubi/omacull`). Follow their conventions unless a doc here says otherwise.
+Omavec is a local-first vector design app for Omarchy: Figma's frames, auto layout and components plus Illustrator's logo tools (Shape Builder, Offset Path, Outline Stroke, width profiles, envelope distort). It is designed to match Figma muscle memory and feel native to Omarchy. Sibling apps: Omapix (raster, `michaelrubi/omapix`) and Omacull (culling, `michaelrubi/omacull`). Follow their conventions unless a doc here says otherwise. VectorCraft (`storytold/vectorcraft`, an MIT/Apache Illustrator clone in Rust) supplies our geometry crates and is the first reference for Illustrator-side features; see "Borrowing from VectorCraft" in `docs/ROADMAP.md` before writing geometry from scratch.
 
 **Status: scoping.** Read `docs/DECISIONS.md`, `docs/DESIGN.md` and `docs/ROADMAP.md` before starting work. Work through `docs/ROADMAP.md` in order, and strike items through with "(done)" when finished.
 

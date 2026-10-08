@@ -7,6 +7,43 @@ goes on a "Later:" line under the item.
 
 Status: scoping done, nothing built. Next up is Phase 0.
 
+## Borrowing from VectorCraft
+
+[VectorCraft](https://github.com/storytold/vectorcraft) is an open-source
+Illustrator clone in Rust, on the same egui 0.36 we use and on kurbo 0.13
+and linesweeper underneath. It already has much of Omavec's Illustrator
+half working and tested: curve booleans, Shape Builder, Offset Path,
+Outline Stroke, Simplify, width profiles, warps, scissors and knife, and
+SVG in and out. It is MIT OR Apache-2.0, so a GPL-3.0 app can use its code
+as long as the copyright notice comes along.
+
+What we take from each of its crates:
+
+| VectorCraft crate | Needs | In Omavec |
+| --- | --- | --- |
+| `vectorcraft-geom` | kurbo, serde | **Dependency.** Its `PathData` (anchor lists) is the type we hand to pathops; vector networks convert to and from it. |
+| `vectorcraft-pathops` | geom, linesweeper | **Dependency.** Booleans that stay curves, Pathfinder, Shape Builder regions (open paths included), offset, outline stroke, simplify. Most of Phase 3's geometry. |
+| `vectorcraft-effects` | its document model | **Port** the modules we need into `omavec-geom` (warp styles, width-profile outlines, dashes), each with a header comment naming its source file and commit. Too tied to their document to depend on. |
+| `vectorcraft-trace` | geom, pathops, image | Dependency, if Image Trace happens (see Later). |
+| `vectorcraft-render`, `ui-egui` | everything | **Reference** for a `vello_cpu` canvas rendered off the UI thread, and for blurs, shadows and glows as `vello_cpu` filter layers. |
+| `vectorcraft-tools` | its document model | **Reference** for tools as pointer events in, Begin/Preview/Commit actions out; the pen, direct selection, Shape Builder and cutting tools. |
+| `vectorcraft-svg` | its document model | **Reference** for usvg import, a minimal SVG writer (stroke alignment, gradients, clipping) and `css_rules` for code export. |
+| `vectorcraft-text` | its document model | **Reference** for the system font catalogue and glyph outlines. |
+| `engine`, `mcp`, the rest | | Reference only (command registry, no-panic rules, MCP server), or not needed (CMYK, print, PDF/EPS/CAD import, brushes). |
+
+What doesn't change: Omavec owns its document (frames, auto layout,
+components, vector networks), its Figma-style UI, its file format and its
+Omarchy integration. VectorCraft's paths have no branches, so vector
+networks stay ours and convert at the pathops boundary.
+
+Rules: pin VectorCraft to a commit and bump it on purpose; a file ported
+from it says so in a header comment (source path and commit), and
+`NOTICE` carries VectorCraft's copyright and MIT licence; take none of its
+brand or assets except under the licences in its `ASSETS.md`; keep kurbo
+on the version vello uses. Whether we stay on a git dependency or vendor
+the two crates is decided in Phase 0 ([DECISIONS.md](DECISIONS.md), "Still
+open").
+
 ## Releases
 
 The full v1.0 bar (logos, screens, components and Figma import) is large,
@@ -15,7 +52,7 @@ app:
 
 | Release | After | You can stop opening… |
 | --- | --- | --- |
-| **v0.1 "Logo"** | Phases 0–4 | Illustrator, and Figma for icons/logos: draw, combine, offset, outline, set type, export clean SVG/PNG |
+| **v0.1 "Logo"** | Phases 0–4 | Illustrator, and Figma for icons/logos: draw, combine, offset, outline, vary stroke width, warp, set type, export clean SVG/PNG |
 | **v0.2 "Screen"** | Phases 5–6 | Figma for new UI work: frames, auto layout, effects, components, variants, variables |
 | **v1.0 "Figma-free"** | Phases 7–8 | Figma entirely: existing files imported, code and token export, the rest of the Illustrator toolkit |
 
@@ -37,25 +74,38 @@ go into DESIGN.md.
 - App shell: an eframe window with the Omarchy theme (ported `theme.rs`),
   a menu bar, empty left (layers) and right (properties) panels, and the
   canvas in the middle.
-- **Spike: vello in egui.** vello 0.11 renders into a texture on egui-wgpu's
-  device (both use wgpu 30) and shows in the canvas panel. Pan and zoom
-  with 10,000 random cubic paths; record frame times at 1×, 64× and
-  0.05× zoom.
-- **Spike: blurs and shadows.** Find out what vello can blur today, and
-  prototype a drop shadow and a layer blur on an arbitrary path (vello's
-  own support, or a render-to-texture pass). Record the cost.
+- **Spike: canvas renderer.** vello 0.11 renders into a texture on
+  egui-wgpu's device (both use wgpu 30) and shows in the canvas panel.
+  Against it, VectorCraft's approach: `vello_cpu` on a worker thread,
+  uploaded as an egui texture, with the last frame reprojected while the
+  next renders (it reports 20,000 shapes in 27 ms per retina frame). Pan
+  and zoom with 10,000 random cubic paths in both; record frame times at
+  1×, 64× and 0.05× zoom, and pick one. If `vello_cpu` holds up, the
+  canvas and headless export share one renderer.
+- **Spike: blurs and shadows.** Prototype a drop shadow and a layer blur
+  on an arbitrary path with the renderer picked above. VectorCraft draws
+  both as `vello_cpu` filter layers (`crates/render/src/fx.rs`): start
+  there; with vello on the GPU, find what it can blur today or add a
+  render-to-texture pass. Record the cost.
 - **Spike: vector network.** `VectorNetwork` with vertices, segments and
   regions; find regions (smallest faces) from the planar graph; convert to
-  `BezPath`; property tests on random graphs.
-- **Spike: curve booleans.** Union/subtract/intersect/exclude two and
-  twenty overlapping curved shapes with `linesweeper`, compare with
-  `i_overlay` (time, anchor count, robustness on coincident edges), and
-  extract faces for Shape Builder.
+  `BezPath` and to and from `vectorcraft_geom::PathData`; property tests
+  on random graphs.
+- **Spike: vectorcraft-pathops.** Add `vectorcraft-geom` and
+  `vectorcraft-pathops` as git dependencies pinned to a commit.
+  Union/subtract/intersect/exclude two and twenty overlapping curved
+  shapes, and get Shape Builder regions; record time, anchor count and
+  behaviour on coincident edges and tangencies. Fall back to raw
+  `linesweeper` or `i_overlay` only for what it gets wrong. Check its
+  kurbo matches vello's.
 - **Spike: text.** Lay out a line with parley using a system font found by
-  fontique, draw it with vello, and turn it into outlines with skrifa.
+  fontique, draw it with the canvas renderer, and turn it into outlines
+  with skrifa. Read `vectorcraft-text`'s font catalogue and outline code
+  first.
 - **Spike: .fig.** Decode a real `.fig` ("Save local copy") with
   `kiwi-schema` and dump its node tree as JSON. Start the fixture folder.
-- Decide the first two "Still open" items in DECISIONS.md.
+- Decide the first two "Still open" items in DECISIONS.md, and item 5
+  (VectorCraft as a git dependency or vendored).
 
 Exit: the shell runs from `make install` in the Omarchy theme, and every
 spike has numbers and a decision written down.
@@ -66,13 +116,18 @@ The editor skeleton: a document you can draw simple shapes in, save,
 reopen and export.
 
 - Engine: node tree with stable ids, `Arc` copy-on-write snapshots, undo
-  and redo, the `Command` enum, dirty tracking.
+  and redo, the `Command` enum, dirty tracking. Shipped code returns
+  errors instead of panicking, as VectorCraft enforces with clippy lints
+  (`unwrap_used`, `expect_used`, `panic` denied outside tests).
 - `.omavec` folder format: deterministic JSON, format version, assets by
   hash. Save, open, recent files, autosave and crash recovery.
 - Canvas: pan (Space/H/middle drag), zoom (Ctrl+wheel, Shift+0/1/2, pinch),
   pixel grid at high zoom, rulers.
 - Selection: click, Shift+click, marquee, deep select (Ctrl+click), select
   in group (double-click / Enter), Esc to parent.
+- Tools as in `vectorcraft-tools`: pointer events in, Begin/Preview/Commit
+  actions out, so every drag is one undo step and every tool is testable
+  without a window.
 - Transform: move, resize and rotate handles; Shift/Alt modifiers; nudge
   with arrows (Shift: 10); numeric X/Y/W/H/rotation in the properties panel.
 - Tools: Frame (artboards = top-level frames, with Figma's device presets),
@@ -87,7 +142,8 @@ reopen and export.
 - Group (Ctrl+G), frame selection (Ctrl+Alt+G), duplicate (Ctrl+D,
   Alt+drag), copy/paste within Omavec and as SVG to the Wayland clipboard.
 - Export: per-node export settings (SVG, PNG @1x/@2x/@3x); `omavec export`
-  CLI; `vello_cpu` for headless PNG.
+  CLI; `vello_cpu` for headless PNG. `vectorcraft-svg`'s writer is the
+  reference for the SVG side.
 - `OMAVEC_SCRIPT` replay and the egui `Harness` for UI tests.
 
 Exit: draw a few shapes in two frames, style them, save, reopen, undo
@@ -107,10 +163,13 @@ The Figma half of paths.
   per-vertex corner radius; delete a vertex and heal (Ctrl+Delete)
   or delete and split.
 - Paint bucket in edit mode: fill or clear individual regions.
-- Pencil (Shift+P) with curve fitting; pressure saved for Phase 8.
+- Pencil (Shift+P) with curve fitting (`vectorcraft-pathops`'
+  `simplify_with`: least squares with corner detection); pressure saved
+  for Phase 8.
 - Convert shapes to vectors, and Flatten (Ctrl+E).
 - SVG import (paste and open) into networks; SVG export from networks with
-  minimal path data.
+  minimal path data. VectorCraft's `crates/svg` covers the usvg mapping
+  and the awkward cases (stroke alignment, clip paths, gradients).
 - Hit testing and snapping on segments and vertices (`rstar`).
 
 Exit: redraw three icons from a real icon set by hand in Omavec, paste
@@ -119,31 +178,45 @@ round-trips through import unchanged.
 
 ## 3. Logo toolkit
 
-The Illustrator half: what people leave Figma for.
+The Illustrator half: what people leave Figma for. The geometry comes
+from `vectorcraft-pathops` and ported VectorCraft modules, so this phase
+is mostly wiring it to vector networks, live modifiers and Figma-style
+UI.
 
 - Live boolean groups (union, subtract, intersect, exclude), curve-native,
   nestable, with Flatten to bake. Toolbar buttons and shortcuts as in
-  Figma.
+  Figma. Built on `boolean` and `boolean_n`.
 - **Shape Builder (Shift+M):** hover highlights faces, drag across faces
   to merge them, Alt+drag to delete faces or edges, with the result's fill
-  taken from the face first clicked.
+  taken from the face first clicked. Built on `shape_builder`,
+  `region_at` and `merge_regions`, which already handle open paths
+  cutting regions.
 - **Outline Stroke (Ctrl+Shift+O):** exact caps, joins and dashes; inside
-  and outside alignment.
+  and outside alignment. `outline_stroke` plus the dash code ported from
+  `vectorcraft-effects`.
 - **Offset Path:** as a live modifier and as a one-off action; miter,
   round and bevel joins; positive and negative distances; clean result
-  (few anchors).
+  (few anchors). `offset_path`; VectorCraft lists a large-offset bug as
+  open, so test big distances.
 - Modifiers panel (the Appearance stack) for live operations on a node.
 - **Scissors (C)** to cut at a point, **Knife (Shift+C)** to slice across
-  shapes.
+  shapes. `vectorcraft-tools`' cutting tools are the reference.
+- **Width tool (Shift+W)** and width profiles, moved up from Phase 8:
+  port `vectorcraft-effects`' width outline. Pressure stays in Phase 8.
+- **Warp presets** (arc, arch, bulge, flag, wave, fish, rise, squeeze,
+  twist) as live modifiers, moved up from Phase 8: port
+  `vectorcraft-effects`' warp styles.
 - Precision: snap to anchors, segment midpoints, intersections and
   tangents; typed angles and lengths while drawing; align to pixel grid.
-- Simplify path (fewer anchors within a tolerance); curvature comb display
-  when editing, to see G2 continuity.
-- Fuzz tests for booleans and offsets against `i_overlay`.
+- Simplify path (`simplify_with`); curvature comb display when editing,
+  to see G2 continuity.
+- Tests: VectorCraft's property and regression tests cover pathops
+  upstream. Ours cover the vector network ↔ `PathData` conversion, live
+  modifier caching, and fuzzing booleans and offsets on vector networks.
 
 Exit: build a real logo (overlapping circles cut with Shape Builder, an
-offset outline, an outlined stroke) without Illustrator, and export SVG
-with no stray anchors.
+offset outline, an outlined stroke, a variable-width stroke) without
+Illustrator, and export SVG with no stray anchors.
 
 ## 4. Text (→ v0.1 "Logo")
 
@@ -177,7 +250,8 @@ The Figma half: screens.
 - Images: drag-in and paste, fill/fit/crop/tile, crop on canvas, image as
   a fill on any shape.
 - Effects: drop shadow, inner shadow, layer blur, background blur
-  (approach from Phase 0's spike).
+  (approach from Phase 0's spike; with `vello_cpu`, port VectorCraft's
+  filter layers).
 - Corner smoothing (Figma's squircle corners) on frames and rectangles.
 - Clip content, masks (use a shape as a mask, Ctrl+Alt+M).
 - Performance pass: a 2,000-frame document stays at display rate.
@@ -212,20 +286,22 @@ from it. **New UI work no longer needs Figma.**
   with the node it was on. Fixture tests from real files.
 - **Code export** panel for the selection (Figma Dev Mode style): CSS,
   Tailwind classes, SVG, SVG-in-JSX/TSX, with variables as CSS custom
-  properties.
+  properties. `vectorcraft-svg`'s `css_rules` is the reference for paints,
+  borders, fonts and shadows as CSS.
 - **Token export** (`omavec tokens`): variables as CSS, a Tailwind theme,
   or an Omarchy theme.
-- PDF export through svg2pdf; export presets for whole pages.
+- PDF export through svg2pdf (or krilla, which VectorCraft uses); export
+  presets for whole pages.
 
 Exit: import your three most-used Figma files, fix up what the report
 lists in under an hour each, and hand a screen off as Tailwind.
 
 ## 8. Illustrator extras and polish (→ v1.0 "Figma-free")
 
-- **Width tool (Shift+W):** drag on a stroke to change its width at a
-  point; saved width profiles; pressure-sensitive pencil via the tablet.
-- **Envelope distort and warp:** warp presets (arc, arch, bulge, flag,
-  wave, fish, rise, squeeze, twist) and mesh envelopes, as live modifiers.
+- Pressure-sensitive pencil via the tablet, feeding width profiles (the
+  Width tool itself moved to Phase 3).
+- **Envelope distort:** mesh envelopes as live modifiers (warp presets
+  moved to Phase 3). VectorCraft's mesh envelopes are the reference.
 - Rich text: mixed styles in one box. Type on a path.
 - Torn-off panels as separate windows for Hyprland tiling.
 - Performance: 100,000-node documents; idle uses no CPU.
@@ -236,7 +312,12 @@ lists in under an hour each, and hand a screen off as Tailwind.
 - Prototyping: links between frames and a present mode (the document model
   leaves room for it).
 - Shared libraries: publish components from one file, use them in others.
-- Plugin API (Lua, Rhai or WASM) for custom tools and exports.
+- Plugin API (Lua, Rhai or WASM) for custom tools and exports. VectorCraft
+  runs WebAssembly plug-ins with `wasmi` (`crates/plugins`).
+- Image Trace for turning scanned sketches into logo outlines, through
+  `vectorcraft-trace`.
+- An MCP server so agents can drive Omavec, as VectorCraft's does. Every
+  action is already a `Command`, so it is a thin layer.
 - Edit placed images in Omapix and update them on save.
 - Display P3 documents.
 - PDF/AI/EPS import.

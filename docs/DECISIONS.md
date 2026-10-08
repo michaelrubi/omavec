@@ -20,6 +20,7 @@ new one below it, so the history stays readable.
 | Question | Answer | Consequence |
 | --- | --- | --- |
 | Relationship to Graphite | **Borrow crates and ideas, own the app** | Fresh codebase. Graphite, Inkscape (lib2geom) and Penpot are references; their code is only taken where licences allow and it fits. |
+| Relationship to VectorCraft (added 8 October 2026) | **Depend on its geometry, port or read the rest** | VectorCraft (MIT OR Apache-2.0, egui 0.36, kurbo 0.13) is an open-source Illustrator clone in Rust. `vectorcraft-geom` and `vectorcraft-pathops` become dependencies for booleans, Shape Builder, offset, outline stroke and simplify; width profiles and warps are ported; its renderer, tools, SVG and text code are references. Omavec still owns its document, UI and format. Details in ROADMAP.md, "Borrowing from VectorCraft". |
 | UI toolkit | **Match the other Oma apps** | egui 0.36 / eframe on wgpu, as in Omapix and Omacull. The canvas is drawn by vello into a wgpu texture shown inside egui (both use wgpu 30). |
 | Native file format | **Git-friendly text** | A `.omavec` folder of pretty-printed JSON (one file per page) plus content-addressed assets. Stable node IDs so diffs are small. |
 | Omarchy integration | **Live theme, Vim-style modal keys, Hyprland-aware, Omarchy install** | Port Omapix's `theme.rs`; command palette and keyboard-first editing; native Wayland, multi-window panels, tablet pressure; Makefile + PKGBUILD like the siblings. |
@@ -57,3 +58,8 @@ phase that needs them starts.
    but it touches the other repos. Decide in Phase 1.
 4. **Display P3.** Figma supports a P3 document profile. Not needed for
    v1; revisit when colour management comes up.
+5. **VectorCraft: git dependency or vendored copy.** A git dependency
+   pinned to a commit gets upstream fixes with one line; a vendored copy
+   of the two crates in `crates/` can't break under us and builds offline
+   from the AUR without a git fetch. Proposal: git dependency, vendored if
+   its API churns. Decide in Phase 0.

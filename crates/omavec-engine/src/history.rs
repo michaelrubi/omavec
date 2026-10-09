@@ -1,9 +1,7 @@
 //! Undo and redo. A step keeps the document as it was before it, which costs
 //! little: documents share every node an edit didn't touch.
 
-use std::sync::Arc;
-
-use crate::document::{Document, Error};
+use crate::document::{Document, Error, Node};
 
 struct Step {
     name: String,
@@ -27,10 +25,10 @@ pub struct History {
     gesture: Option<Step>,
 }
 
-/// Whether nothing in `a` was touched to make `b`: the same pages, by
-/// pointer. An edit always copies the page it changes.
-fn untouched(a: &Document, b: &Document) -> bool {
-    a.pages.len() == b.pages.len() && a.pages.iter().zip(&b.pages).all(|(a, b)| Arc::ptr_eq(a, b))
+/// Whether `b` is `a` still: the same pages, holding the same things. An
+/// edit that writes a value over itself copies nodes but changes nothing.
+fn unchanged(a: &Document, b: &Document) -> bool {
+    a.pages.len() == b.pages.len() && a.pages.iter().zip(&b.pages).all(|(a, b)| Node::same(a, b))
 }
 
 impl History {
@@ -56,13 +54,16 @@ impl History {
         let revision = self.revision;
         match change(&mut self.document) {
             Ok(value) => {
-                if !untouched(&before, &self.document) {
+                if !unchanged(&before, &self.document) {
                     self.revisions += 1;
                     self.revision = self.revisions;
                     if self.gesture.is_none() {
                         self.undo.push(Step { name: name.into(), document: before, revision });
                         self.redo.clear();
                     }
+                } else {
+                    // Keep the nodes the snapshots already share.
+                    self.document = before;
                 }
                 Ok(value)
             }

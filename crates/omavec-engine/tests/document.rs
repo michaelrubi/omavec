@@ -233,9 +233,10 @@ fn a_failed_edit_leaves_no_trace() {
     assert_eq!(history.revision(), revision);
     assert_eq!(history.undo_name(), None);
     assert!(!history.is_dirty());
-    // Nor does an edit that changes nothing.
+    // Nor does an edit that changes nothing, or writes a value over itself.
     history.edit("Look", |document| Ok(document.node(s.one).is_some())).unwrap();
-    assert_eq!(history.undo_name(), None);
+    rename(&mut history, s.one, "Rectangle");
+    assert_eq!((history.undo_name(), history.revision(), history.is_dirty()), (None, revision, false));
 }
 
 #[test]

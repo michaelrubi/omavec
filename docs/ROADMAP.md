@@ -8,7 +8,8 @@ goes on a "Later:" line under the item.
 Status: Phase 0 is done bar Michael trying the shell by hand. Phase 1 is
 under way: you can draw frames, rectangles and ellipses, select, move and
 delete them, resize them by their handles or by number, undo and redo,
-and save and reopen the document. Nothing can be styled or exported yet.
+change their fills, and save and reopen the document. Nothing can be
+exported yet.
 
 ## Borrowing from VectorCraft
 
@@ -226,7 +227,9 @@ reopen and export.
   linear/radial/angular/diamond gradients with on-canvas handles; the
   colour picker with eyedropper. Built so far: a stack of solid fills per
   node with opacity and visibility, Figma's defaults (grey shapes, white
-  frames), drawn by the canvas. Nothing in the UI changes them yet.
+  frames), drawn by the canvas. The Design panel lists one selected
+  node's fills, top first, with a colour picker, opacity, a show/hide box
+  and add and remove; dragging in the picker is one undo step.
   Later: a node's opacity as a layer, not multiplied into its children;
   frames that clip what they draw (hit testing already respects it).
 - Panels: layers (tree, rename, reorder by drag, hide, lock, multi-select),

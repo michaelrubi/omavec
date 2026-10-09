@@ -97,6 +97,19 @@ fn is_identity(transform: &Affine) -> bool {
 }
 
 impl Node {
+    /// Whether two trees are equal, without walking what they share: after
+    /// an edit that is everything off the path to the change.
+    pub(crate) fn same(a: &Arc<Node>, b: &Arc<Node>) -> bool {
+        if Arc::ptr_eq(a, b) {
+            return true;
+        }
+        // Spelled out so that a new field can't be forgotten here.
+        let Node { id, kind, name, visible, locked, opacity, transform, size, fills, children } = &**a;
+        (id, kind, name, visible, locked, opacity, transform, size, fills) == (&b.id, &b.kind, &b.name, &b.visible, &b.locked, &b.opacity, &b.transform, &b.size, &b.fills)
+            && children.len() == b.children.len()
+            && children.iter().zip(&b.children).all(|(a, b)| Node::same(a, b))
+    }
+
     /// Whether `point`, in this node's own coordinates, is on its shape.
     /// Pages and groups have no shape of their own.
     fn covers(&self, point: Point) -> bool {

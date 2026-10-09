@@ -8,6 +8,7 @@ use omavec_geom::kurbo::{Point, Rect, Vec2};
 
 use crate::canvas::{Canvas, Pointer};
 use crate::commands::Command;
+use crate::properties::Properties;
 use crate::theme::{self, Theme};
 use crate::tools::{Keys, Tool, Tools};
 
@@ -23,6 +24,7 @@ pub struct App {
     canvas: Canvas,
     history: History,
     tools: Tools,
+    properties: Properties,
     /// The page on the canvas.
     page: NodeId,
     /// The revision of the document the canvas is drawing.
@@ -68,7 +70,7 @@ impl App {
         canvas.readout = blobs.is_some();
         let document = Document::default();
         let page = document.pages[0].id;
-        Self { theme, theme_rx: None, show_ui: true, canvas, history: History::new(document), tools: Tools::default(), page, drawn: None, spike: blobs.is_some(), path: None, dialog: None, status: None, title: String::new() }
+        Self { theme, theme_rx: None, show_ui: true, canvas, history: History::new(document), tools: Tools::default(), properties: Properties::default(), page, drawn: None, spike: blobs.is_some(), path: None, dialog: None, status: None, title: String::new() }
     }
 
     fn say(&mut self, message: impl Into<String>, wrong: bool) {
@@ -322,7 +324,7 @@ impl App {
                 .show(ui, |ui| {
                     ui.strong("Design");
                     ui.separator();
-                    let shown = crate::properties::show(ui, &mut self.history, &self.tools.selection);
+                    let shown = self.properties.show(ui, &mut self.history, &self.tools.selection);
                     self.check(shown);
                     ui.take_available_space();
                 });

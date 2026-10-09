@@ -1,0 +1,9 @@
+[package]
+name = "omavec-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Omavec's renderer: display list to vello"
+
+[dependencies]
+omavec-engine = { version = "0.0.1", path = "../omavec-engine" }

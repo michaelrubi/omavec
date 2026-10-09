@@ -58,8 +58,14 @@ phase that needs them starts.
    but it touches the other repos. Decide in Phase 1.
 4. **Display P3.** Figma supports a P3 document profile. Not needed for
    v1; revisit when colour management comes up.
-5. **VectorCraft: git dependency or vendored copy.** A git dependency
+5. ~~**VectorCraft: git dependency or vendored copy.** A git dependency
    pinned to a commit gets upstream fixes with one line; a vendored copy
    of the two crates in `crates/` can't break under us and builds offline
    from the AUR without a git fetch. Proposal: git dependency, vendored if
-   its API churns. Decide in Phase 0.
+   its API churns. Decide in Phase 0.~~
+   **Decided (9 October 2026): git dependency.** `omavec-geom` depends on
+   `vectorcraft-geom` and `vectorcraft-pathops` at commit `4cf912fa`. They
+   pull in only kurbo, linesweeper, serde and thiserror, and share the
+   tree's one kurbo. `cargo fetch --locked` in the PKGBUILD fetches the
+   pinned commit, so the AUR build needs nothing extra. Vendor the two
+   crates if upgrades get painful.

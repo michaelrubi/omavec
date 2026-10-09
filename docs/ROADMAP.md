@@ -5,7 +5,8 @@ the architecture; [DECISIONS.md](DECISIONS.md) records why. As in Omapix,
 finished items are ~~struck through~~ with "(done)", and anything deferred
 goes on a "Later:" line under the item.
 
-Status: scoping done, nothing built. Next up is Phase 0.
+Status: Phase 0 under way. The workspace and the app shell exist; the
+spikes are next.
 
 ## Borrowing from VectorCraft
 
@@ -66,14 +67,22 @@ riskiest technical questions before building on them. Spikes live in
 `crates/*/examples/` and are deleted or promoted afterwards; their results
 go into DESIGN.md.
 
-- Workspace: `Cargo.toml` (edition 2024, resolver 3, GPL-3.0-or-later),
+- ~~Workspace: `Cargo.toml` (edition 2024, resolver 3, GPL-3.0-or-later),
   crates from DESIGN.md (empty but compiling), `Makefile`
   (`build`/`test`/`install`/`uninstall`), `assets/omavec.desktop`,
   `assets/omavec.svg`, `packaging/arch/PKGBUILD`, `CONTRIBUTING.md`, CI
-  for `cargo test` and `clippy`.
-- App shell: an eframe window with the Omarchy theme (ported `theme.rs`),
+  for `cargo test` and `clippy`.~~ (done) The five crates compile;
+  `omavec-geom` already depends on `vectorcraft-geom` and
+  `vectorcraft-pathops`, pinned to one commit, with one kurbo (0.13.1) in
+  the tree. `NOTICE` carries VectorCraft's copyright and licence. CI is a
+  GitHub Actions workflow.
+  Later: a MIME type for `.omavec` in the `.desktop` file, once the format
+  is decided (folder or single file).
+- ~~App shell: an eframe window with the Omarchy theme (ported `theme.rs`),
   a menu bar, empty left (layers) and right (properties) panels, and the
-  canvas in the middle.
+  canvas in the middle.~~ (done) The theme follows Omarchy live. The first
+  two `Command`s are Quit (Ctrl+Q) and Show/Hide UI (Ctrl+\, as in Figma),
+  tested headless.
 - **Spike: canvas renderer.** vello 0.11 renders into a texture on
   egui-wgpu's device (both use wgpu 30) and shows in the canvas panel.
   Against it, VectorCraft's approach: `vello_cpu` on a worker thread,

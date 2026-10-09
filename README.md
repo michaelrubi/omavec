@@ -9,7 +9,8 @@ without switching apps.
 > Omavec is an independent project. It is not made by or affiliated with
 > Omarchy.
 
-**Status:** scoping. There's no code yet, only the plan:
+**Status:** early. There's a window in the Omarchy theme and not much
+else yet. The plan:
 
 - [docs/DECISIONS.md](docs/DECISIONS.md): what Omavec is and isn't, and why
 - [docs/DESIGN.md](docs/DESIGN.md): the architecture

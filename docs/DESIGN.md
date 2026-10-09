@@ -9,7 +9,7 @@ app.
 
 It is an independent project, not part of Omarchy.
 
-Status: scoping. No code yet. The decisions behind this document are in
+Status: Phase 0 (foundations and spikes). The decisions behind this document are in
 [DECISIONS.md](DECISIONS.md); the order of work is in
 [ROADMAP.md](ROADMAP.md).
 

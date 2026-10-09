@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Omavec
+GenericName=Vector Design
+Comment=Design logos and screens with frames, auto layout and Illustrator's path tools
+Exec=omavec %f
+Icon=omavec
+Terminal=false
+Categories=Graphics;2DGraphics;VectorGraphics;
+StartupWMClass=omavec

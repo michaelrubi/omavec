@@ -1,0 +1,17 @@
+[package]
+name = "omavec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A local-first vector design app for Omarchy"
+
+[dependencies]
+eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "wayland", "x11", "default_fonts"] }
+egui = "0.36.2"
+env_logger = "0.11.11"
+log = "0.4.34"
+omavec-engine = { version = "0.0.1", path = "../omavec-engine" }
+omavec-fig = { version = "0.0.1", path = "../omavec-fig" }
+omavec-geom = { version = "0.0.1", path = "../omavec-geom" }
+omavec-render = { version = "0.0.1", path = "../omavec-render" }
+toml = "1.1.6"

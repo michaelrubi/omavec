@@ -1,0 +1,9 @@
+[package]
+name = "omavec-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Omavec's document: node tree, layout, text, components, undo and file formats"
+
+[dependencies]
+omavec-geom = { version = "0.0.1", path = "../omavec-geom" }

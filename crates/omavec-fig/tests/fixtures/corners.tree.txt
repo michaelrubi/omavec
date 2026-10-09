@@ -1,0 +1,13 @@
+DOCUMENT 0:0 Document
+  CANVAS 0:1 Page 1
+    VECTOR 2051:16 shape radius=4:8:12:16
+    VECTOR 2051:15 shape radius=12, smoothing=1.0
+    VECTOR 2051:6 rect radius=4:8:12:16
+    VECTOR 2051:4 rect radius=0:12:0:0
+    ROUNDED_RECTANGLE 2051:3 rect radius=12, smoothing=0.6
+    ROUNDED_RECTANGLE 2051:2 rect radius=12, smoothing=none
+    FRAME 2051:13 frame radius=0:12:0:0
+    FRAME 2051:14 frame radius=4:8:12:16
+    FRAME 2051:12 frame radius=12, smoothing=0.6
+    FRAME 2051:11 frame radius=12, smoothing=none
+  CANVAS 0:2 Internal Only Canvas

@@ -1,0 +1,5 @@
+DOCUMENT 0:0 Document
+  CANVAS 0:1 Page 1
+    FRAME 0:3 Vector artboard
+      VECTOR 0:5 Complex
+  CANVAS 0:2 Internal Only Canvas

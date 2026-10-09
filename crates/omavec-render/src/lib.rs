@@ -20,6 +20,14 @@ pub struct Frame {
     pub pixels: Vec<u8>,
 }
 
+impl Frame {
+    /// The frame as a PNG file's bytes.
+    pub fn into_png(self) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+        let pixmap = Pixmap::from_parts(self.pixels, self.width, self.height, vello_cpu::PixelMetadata::new(ImageAlphaType::AlphaPremultiplied, true));
+        Ok(pixmap.into_png()?)
+    }
+}
+
 /// Keeps `vello_cpu`'s buffers and worker threads between frames.
 pub struct Renderer {
     context: RenderContext,
@@ -112,6 +120,19 @@ mod tests {
         assert_eq!(pixel(&frame, 40, 20), [0xd9, 0xd9, 0xd9, 255], "the middle of the ellipse");
         assert_eq!(pixel(&frame, 31, 11), [255, 255, 255, 255], "the frame, in the corner of the ellipse's box");
         assert_eq!(pixel(&frame, 55, 20), [40, 40, 40, 255], "past the frame");
+    }
+
+    #[test]
+    fn a_frame_becomes_a_png_with_its_transparency() {
+        let list = DisplayList { items: vec![Item::new(Rect::new(0.0, 0.0, 4.0, 4.0).to_path(0.1), Color::from_rgba8(255, 0, 0, 128))] };
+        let frame = Renderer::default().render(&list, Affine::IDENTITY, 8, 6, Color::TRANSPARENT);
+        let png = frame.into_png().unwrap();
+        let decoded = Pixmap::from_png(std::io::Cursor::new(png)).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (8, 6));
+        let pixel = |x: u16, y: u16| decoded.sample(x, y);
+        // Half-transparent red where the square is, nothing beside it.
+        assert_eq!((pixel(1, 1).a, pixel(6, 4).a), (128, 0));
+        assert!(pixel(1, 1).r >= 127 && pixel(1, 1).g == 0);
     }
 
     #[test]

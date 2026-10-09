@@ -6,4 +6,10 @@ license.workspace = true
 description = "Best-effort .fig importer for Omavec"
 
 [dependencies]
+flate2 = "1.0"
+kiwi-schema = "0.2.1"
 omavec-engine = { version = "0.0.1", path = "../omavec-engine" }
+ruzstd = "0.8"
+serde_json = "1.0"
+thiserror = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }

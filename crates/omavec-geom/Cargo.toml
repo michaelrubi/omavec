@@ -12,3 +12,6 @@ kurbo = "0.13.1"
 # VectorCraft".
 vectorcraft-geom = { git = "https://github.com/storytold/vectorcraft", rev = "4cf912fa947f2c2ce5415f2eb704c39b8e31e9dd" }
 vectorcraft-pathops = { git = "https://github.com/storytold/vectorcraft", rev = "4cf912fa947f2c2ce5415f2eb704c39b8e31e9dd" }
+
+[dev-dependencies]
+proptest = "1.11.0"

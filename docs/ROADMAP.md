@@ -6,9 +6,9 @@ finished items are ~~struck through~~ with "(done)", and anything deferred
 goes on a "Later:" line under the item.
 
 Status: Phase 0 under way. The workspace, the app shell and the canvas
-exist, and four of the six spikes are done (renderer, effects, pathops,
-.fig). The vector network and text spikes and the two format decisions
-are left.
+exist, and five of the six spikes are done (renderer, effects, vector
+network, pathops, .fig). The text spike and the two "Still open"
+decisions are left.
 
 ## Borrowing from VectorCraft
 
@@ -113,10 +113,14 @@ go into DESIGN.md.
   shape and 15 to 30 ms for a 1,200 px one, so Phase 5 caches them per
   node and zoom; rounded-rectangle shadows take a shortcut that costs
   nothing.
-- **Spike: vector network.** `VectorNetwork` with vertices, segments and
+- ~~**Spike: vector network.** `VectorNetwork` with vertices, segments and
   regions; find regions (smallest faces) from the planar graph; convert to
   `BezPath` and to and from `vectorcraft_geom::PathData`; property tests
-  on random graphs.
+  on random graphs.~~ (done) `omavec_geom::network`. Faces are checked
+  against a flood fill on random grids and against Euler's formula on
+  random curved ones; a network survives the trip through `PathData`
+  unchanged. Faces of a 4,900-segment mesh take 1.3 ms. What it leaves
+  for Phase 2 is listed in DESIGN.md.
 - ~~**Spike: vectorcraft-pathops.** Add `vectorcraft-geom` and
   `vectorcraft-pathops` as git dependencies pinned to a commit.
   Union/subtract/intersect/exclude two and twenty overlapping curved
@@ -195,7 +199,9 @@ from the CLI.
 
 The Figma half of paths.
 
-- Vector networks in the engine, replacing the spike.
+- Vector networks in the engine, built on Phase 0's
+  `omavec_geom::network`: crossings without a vertex, corner radius and
+  handle mirroring per vertex.
 - Pen tool with Figma's behaviour: click for corners, drag for curves,
   branch from any vertex, close onto any vertex, Shift for 45°, Alt to
   break handles, Ctrl for the bend tool.

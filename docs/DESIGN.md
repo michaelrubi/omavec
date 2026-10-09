@@ -124,8 +124,10 @@ struct VectorNetwork {
 
 - A vertex can have any number of segments (branches, webs, T-joins).
 - Regions are the fillable faces. They are found from the planar graph
-  (smallest cycles, as in Figma's paint bucket) and can carry their own
-  fills, so one network can hold a multi-colour icon.
+  (smallest cycles, as in Figma's paint bucket; "Phase 0 findings" below
+  has the algorithm) and can carry their own fills, so one network can
+  hold a multi-colour icon. A region is a list of loops, each a list of
+  segments with a direction, so it can have holes.
 - Rendering, booleans and export convert regions and open chains to
   `kurbo::BezPath`. SVG import goes the other way: subpaths become chains,
   and shared endpoints are merged.
@@ -433,6 +435,46 @@ on every drag frame; Shape Builder's arrangement of a busy selection
 (18 ms) is built once when the tool starts, not per pointer move. Neither
 `i_overlay` nor raw `linesweeper` is needed. Its kurbo (0.13.1) is the one
 `vello_cpu` and peniko use.
+
+### Vector networks: faces from a walk round each vertex
+
+`omavec_geom::network` holds the spike: `VectorNetwork` (vertices,
+segments with tangents relative to their vertices, regions as loops of
+half-edges), `faces()`, and conversion to and from `BezPath` and
+VectorCraft's `PathData`.
+
+- **Finding faces.** Sort the half-edges leaving each vertex by angle.
+  Walking a half-edge and then always taking the next one clockwise from
+  the way back traces one face; every half-edge is on exactly one walk.
+  Walks with positive area are faces, and the one negative walk per
+  connected piece is its outside. Dead ends drop out of a walk (a segment
+  walked there and back bounds nothing), and a piece that sits inside
+  another piece's face becomes a hole in the smallest face that holds it.
+- **Checked against a flood fill.** On random grids of straight edges, a
+  flood fill over the cells says which cells are enclosed and which belong
+  together, with no geometry involved. `faces()` must give exactly those
+  areas, holes and islands included. On random bent grids with diagonals
+  it must satisfy Euler's formula (faces = segments − vertices + pieces)
+  with no two faces overlapping. Both hold over 20,000 random graphs, and
+  networks full of nonsense (missing vertices, NaN, loops on one vertex)
+  never panic.
+- **Paths.** `to_bezpath` writes each region's loops as closed subpaths
+  and the segments no region uses as open runs; `from_bezpath` merges
+  points that coincide into one vertex and an edge two subpaths share into
+  one segment, so two squares side by side come in as six vertices and
+  seven segments. A network goes out through `PathData` and comes back
+  with the same vertices, segments and faces. `stroke_path` gives every
+  segment once, joined into the longest runs, which is what a stroke
+  follows.
+- **Speed** (`cargo run --release -p omavec-geom --example network`):
+  faces of a 50 × 50 mesh (4,900 segments, 2,401 faces) in 1.3 ms, of a
+  200 × 200 mesh (79,600 segments) in 23 ms, and of 2,500 islands inside
+  one face in 7.5 ms.
+- **Left for Phase 2.** Segments that cross without a vertex (run them
+  through `vectorcraft-pathops`' planar map first), curves that leave a
+  vertex in exactly the same direction and curvature, per-vertex corner
+  radius and handle mirroring, and an R-tree instead of the hash grid that
+  merges points.
 
 ### `.fig`: `kiwi-schema` reads current files
 

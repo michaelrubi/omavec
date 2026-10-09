@@ -5,6 +5,7 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 mod document;
+pub mod file;
 mod history;
 
 pub use document::{Document, Error, Node, NodeId, NodeKind};

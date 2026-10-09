@@ -5,10 +5,12 @@
 use std::sync::Arc;
 
 use omavec_geom::kurbo::{Affine, Size};
+use serde::{Deserialize, Serialize};
 
 /// A node's identity, kept across saves so diffs stay small and instance
 /// overrides can name nodes inside components.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct NodeId(pub u64);
 
 #[derive(Debug, PartialEq, thiserror::Error)]
@@ -23,7 +25,8 @@ pub enum Error {
     PageInsideNode,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum NodeKind {
     /// A page: the top of each tree, and the only kind found there.
     Page,
@@ -52,19 +55,51 @@ impl NodeKind {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+/// In a file, whatever has its usual value is left out, so a plain
+/// rectangle is five lines and a diff shows only what was changed.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Node {
     pub id: NodeId,
+    #[serde(flatten)]
+    pub kind: NodeKind,
     pub name: String,
+    #[serde(default = "yes", skip_serializing_if = "is_yes")]
     pub visible: bool,
+    #[serde(default, skip_serializing_if = "is_no")]
     pub locked: bool,
+    #[serde(default = "one", skip_serializing_if = "is_one")]
     pub opacity: f64,
     /// Where the node sits in its parent.
+    #[serde(default, skip_serializing_if = "is_identity")]
     pub transform: Affine,
     pub size: Size,
-    pub kind: NodeKind,
     /// Back to front: the last child is drawn on top.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Arc<Node>>,
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn is_yes(value: &bool) -> bool {
+    *value
+}
+
+fn is_no(value: &bool) -> bool {
+    !*value
+}
+
+fn one() -> f64 {
+    1.0
+}
+
+fn is_one(value: &f64) -> bool {
+    *value == 1.0
+}
+
+fn is_identity(transform: &Affine) -> bool {
+    *transform == Affine::IDENTITY
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -83,6 +118,20 @@ impl Default for Document {
 }
 
 impl Document {
+    /// A document read from a file. Ids already in `pages` are never handed
+    /// out again, whatever the file said the next one was.
+    pub(crate) fn from_parts(pages: Vec<Arc<Node>>, next_id: u64) -> Self {
+        fn highest(nodes: &[Arc<Node>]) -> u64 {
+            nodes.iter().map(|node| node.id.0.max(highest(&node.children))).max().unwrap_or(0)
+        }
+        let next_id = next_id.max(highest(&pages).saturating_add(1));
+        Self { pages, next_id }
+    }
+
+    pub(crate) fn next_id(&self) -> u64 {
+        self.next_id
+    }
+
     /// A new node of `kind` with an id of its own, not yet in the tree.
     pub fn create(&mut self, kind: NodeKind, size: Size) -> Node {
         let id = NodeId(self.next_id);

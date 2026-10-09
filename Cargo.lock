@@ -2115,6 +2115,8 @@ version = "0.0.1"
 dependencies = [
  "omavec-geom",
  "proptest",
+ "serde",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 

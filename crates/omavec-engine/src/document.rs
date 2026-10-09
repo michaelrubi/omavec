@@ -7,7 +7,7 @@ use std::sync::Arc;
 use omavec_geom::kurbo::{Affine, Point, Rect, Size};
 use serde::{Deserialize, Serialize};
 
-use crate::paint::{Color, Paint, is_no, is_one, is_yes, one, yes};
+use crate::paint::{Color, Paint, Stroke, is_no, is_one, is_yes, one, yes};
 
 /// A node's identity, kept across saves so diffs stay small and instance
 /// overrides can name nodes inside components.
@@ -87,6 +87,8 @@ pub struct Node {
     /// Bottom to top: the last fill is painted over the others.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fills: Vec<Paint>,
+    #[serde(default, skip_serializing_if = "Stroke::is_none")]
+    pub stroke: Stroke,
     /// Back to front: the last child is drawn on top.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Arc<Node>>,
@@ -104,8 +106,8 @@ impl Node {
             return true;
         }
         // Spelled out so that a new field can't be forgotten here.
-        let Node { id, kind, name, visible, locked, opacity, transform, size, fills, children } = &**a;
-        (id, kind, name, visible, locked, opacity, transform, size, fills) == (&b.id, &b.kind, &b.name, &b.visible, &b.locked, &b.opacity, &b.transform, &b.size, &b.fills)
+        let Node { id, kind, name, visible, locked, opacity, transform, size, fills, stroke, children } = &**a;
+        (id, kind, name, visible, locked, opacity, transform, size, fills, stroke) == (&b.id, &b.kind, &b.name, &b.visible, &b.locked, &b.opacity, &b.transform, &b.size, &b.fills, &b.stroke)
             && children.len() == b.children.len()
             && children.iter().zip(&b.children).all(|(a, b)| Node::same(a, b))
     }
@@ -180,7 +182,7 @@ impl Document {
     pub fn create(&mut self, kind: NodeKind, size: Size) -> Node {
         let id = NodeId(self.next_id);
         self.next_id += 1;
-        Node { id, name: kind.label().into(), visible: true, locked: false, opacity: 1.0, transform: Affine::IDENTITY, size, fills: kind.fills(), kind, children: Vec::new() }
+        Node { id, name: kind.label().into(), visible: true, locked: false, opacity: 1.0, transform: Affine::IDENTITY, size, fills: kind.fills(), stroke: Stroke::default(), kind, children: Vec::new() }
     }
 
     pub fn add_page(&mut self, name: &str) -> NodeId {

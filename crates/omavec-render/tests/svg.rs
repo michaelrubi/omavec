@@ -180,3 +180,40 @@ fn nested_frame_inside_rotated_group_renders_identically() {
 
     assert_svg_matches_render("nested_frame_inside_rotated_group", &document, frame_id);
 }
+
+#[test]
+fn strokes_render_identically_on_every_side_of_the_edge() {
+    use omavec_engine::{Align, Stroke};
+    let mut document = Document::default();
+    let page = document.pages[0].id;
+    let stroke = |color: Color, weight: f64, align: Align| Stroke { paints: vec![Paint::solid(color)], weight, align };
+
+    // A frame with a thick inside stroke of its own, drawn over what is in it.
+    let mut frame = document.create(NodeKind::Frame { clip: false }, Size::new(360.0, 240.0));
+    frame.transform = Affine::translate((21.0, 34.0));
+    frame.stroke = stroke(Color::rgb(0x33, 0x33, 0x33), 12.0, Align::Inside);
+    let frame_id = frame.id;
+    document.insert(page, 0, frame).unwrap();
+
+    // One of each alignment, far enough apart that the sides are plain to see,
+    // and one overlapping the frame's own stroke.
+    for (i, align) in [Align::Inside, Align::Center, Align::Outside].into_iter().enumerate() {
+        let mut ellipse = document.create(NodeKind::Ellipse, Size::new(80.0, 50.0));
+        ellipse.transform = Affine::translate((30.0 + 110.0 * i as f64, 30.0));
+        ellipse.fills = vec![Paint::solid(Color::rgb(0xf9, 0xe2, 0xaf))];
+        ellipse.stroke = stroke(Color::rgb(0xd2, 0x0f, 0x39), 14.0, align);
+        document.insert(frame_id, usize::MAX, ellipse).unwrap();
+
+        let mut rectangle = document.create(NodeKind::Rectangle, Size::new(70.0, 40.0));
+        rectangle.transform = Affine::translate((50.0 + 110.0 * i as f64, 140.0)) * Affine::rotate(0.4);
+        rectangle.fills = vec![Paint::solid(Color::rgb(0x89, 0xb4, 0xfa))];
+        rectangle.stroke = stroke(Color::rgb(0x40, 0xa0, 0x2b), 10.0, align);
+        rectangle.stroke.paints[0].opacity = 0.6;
+        document.insert(frame_id, usize::MAX, rectangle).unwrap();
+    }
+    let mut edge = document.create(NodeKind::Rectangle, Size::new(60.0, 60.0));
+    edge.transform = Affine::translate((-20.0, 90.0));
+    document.insert(frame_id, usize::MAX, edge).unwrap();
+
+    assert_svg_matches_render("strokes", &document, frame_id);
+}

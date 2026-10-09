@@ -141,3 +141,48 @@ fn hidden_root_exports_empty_svg() {
     let svg_text = svg::write(&document, frame_id).unwrap();
     assert_eq!(svg_text, expected);
 }
+
+#[test]
+fn a_centred_stroke_is_a_stroke_and_the_others_are_the_area_they_cover() {
+    use omavec_engine::{Align, Stroke};
+    let mut document = Document::default();
+    let page = document.pages[0].id;
+    let black = |weight: f64, align: Align| Stroke { paints: vec![Paint::solid(Color::rgb(0, 0, 0))], weight, align };
+
+    let mut frame = document.create(NodeKind::Frame { clip: false }, Size::new(100.0, 60.0));
+    frame.stroke = black(1.0, Align::Center);
+    frame.stroke.paints[0].opacity = 0.5;
+    let frame_id = frame.id;
+    document.insert(page, 0, frame).unwrap();
+
+    let mut centred = document.create(NodeKind::Ellipse, Size::new(20.0, 10.0));
+    centred.transform = Affine::translate((5.0, 5.0));
+    centred.stroke = black(2.5, Align::Center);
+    document.insert(frame_id, usize::MAX, centred).unwrap();
+
+    let mut inside = document.create(NodeKind::Rectangle, Size::new(20.0, 10.0));
+    inside.transform = Affine::translate((40.0, 5.0));
+    inside.fills.clear();
+    inside.stroke = black(2.0, Align::Inside);
+    document.insert(frame_id, usize::MAX, inside).unwrap();
+
+    let mut hidden = document.create(NodeKind::Rectangle, Size::new(20.0, 10.0));
+    hidden.fills.clear();
+    hidden.stroke = black(2.0, Align::Outside);
+    hidden.stroke.paints[0].visible = false;
+    document.insert(frame_id, usize::MAX, hidden).unwrap();
+
+    let svg = omavec_engine::svg::write(&document, frame_id).unwrap();
+    let lines: Vec<&str> = svg.lines().collect();
+    assert_eq!(lines[1], r##"  <rect width="100" height="60" fill="#ffffff"/>"##);
+    assert_eq!(lines[2], r##"  <ellipse cx="15" cy="10" rx="10" ry="5" fill="#d9d9d9"/>"##);
+    assert_eq!(lines[3], r##"  <ellipse cx="15" cy="10" rx="10" ry="5" fill="none" stroke="#000000" stroke-width="2.5"/>"##);
+    // An inside stroke on a 20 × 10 box: the ring between it and 16 × 6.
+    assert!(lines[4].starts_with(r#"  <path d="M"#) && lines[4].ends_with(r##"Z" transform="translate(40 5)" fill="#000000"/>"##), "{}", lines[4]);
+    for number in lines[4].split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-')).filter(|part| !part.is_empty()) {
+        assert!(number.split_once('.').is_none_or(|(_, decimals)| decimals.len() <= 3), "{number} in {}", lines[4]);
+    }
+    // The frame's own stroke last, over what is in it; the hidden one nowhere.
+    assert_eq!(lines[5], r##"  <rect width="100" height="60" fill="none" stroke="#000000" stroke-width="1" stroke-opacity="0.5"/>"##);
+    assert_eq!(lines[6], "</svg>");
+}

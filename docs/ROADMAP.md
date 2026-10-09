@@ -188,8 +188,10 @@ reopen and export.
   (Ctrl+N), Open (Ctrl+O), Save (Ctrl+S) and Save As (Ctrl+Shift+S) in
   the app, `omavec logo.omavec` from a terminal, a dot in the title while
   there are unsaved changes, and a question before New, Open, Quit or
-  closing the window would throw them away. Left: assets, recent files,
-  autosave and crash recovery, and `.omavecz`.
+  closing the window would throw them away. `.omavecz` is built in the
+  engine (the same files zipped, the same bytes for the same document)
+  with its MIME type and launcher entry. Left: assets, recent files, and
+  autosave and crash recovery.
 - ~~Canvas: pan (Space/H/middle drag), zoom (Ctrl+wheel, Shift+0/1/2, pinch),
   pixel grid at high zoom, rulers.~~ (done) The wheel, middle drag,
   Space+drag and the Hand tool (H) pan; Ctrl+wheel and a pinch zoom about

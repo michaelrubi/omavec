@@ -91,6 +91,30 @@ mod tests {
     }
 
     #[test]
+    fn a_document_is_drawn_as_its_nodes_are_laid_out() {
+        use omavec_engine::{Document, NodeKind};
+        // A white frame at (10, 10), with Figma's grey ellipse filling its
+        // right half.
+        let mut document = Document::default();
+        let page = document.pages[0].id;
+        let mut frame = document.create(NodeKind::Frame { clip: true }, (40.0, 20.0).into());
+        frame.transform = Affine::translate((10.0, 10.0));
+        let frame_id = frame.id;
+        document.insert(page, 0, frame).unwrap();
+        let mut ellipse = document.create(NodeKind::Ellipse, (20.0, 20.0).into());
+        ellipse.transform = Affine::translate((20.0, 0.0));
+        document.insert(frame_id, 0, ellipse).unwrap();
+
+        let list = DisplayList::of(&document.pages[0]);
+        let frame = Renderer::default().render(&list, Affine::IDENTITY, 64, 40, Color::from_rgb8(40, 40, 40));
+        assert_eq!(pixel(&frame, 5, 20), [40, 40, 40, 255], "the backdrop");
+        assert_eq!(pixel(&frame, 20, 20), [255, 255, 255, 255], "the frame");
+        assert_eq!(pixel(&frame, 40, 20), [0xd9, 0xd9, 0xd9, 255], "the middle of the ellipse");
+        assert_eq!(pixel(&frame, 31, 11), [255, 255, 255, 255], "the frame, in the corner of the ellipse's box");
+        assert_eq!(pixel(&frame, 55, 20), [40, 40, 40, 255], "past the frame");
+    }
+
+    #[test]
     fn a_path_half_off_the_frame_is_still_drawn() {
         let red = Color::from_rgb8(255, 0, 0);
         let list = DisplayList { items: vec![Item::new(Rect::new(-50.0, -50.0, 8.0, 8.0).to_path(0.1), red)] };

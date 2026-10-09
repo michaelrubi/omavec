@@ -2114,6 +2114,8 @@ name = "omavec-engine"
 version = "0.0.1"
 dependencies = [
  "omavec-geom",
+ "proptest",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

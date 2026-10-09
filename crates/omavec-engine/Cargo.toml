@@ -7,3 +7,7 @@ description = "Omavec's document: node tree, layout, text, components, undo and 
 
 [dependencies]
 omavec-geom = { version = "0.0.1", path = "../omavec-geom" }
+thiserror = "2.0.20"
+
+[dev-dependencies]
+proptest = "1.11.0"

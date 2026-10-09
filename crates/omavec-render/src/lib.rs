@@ -1,6 +1,8 @@
 //! Draws a display list with `vello_cpu`: on a worker thread for the canvas,
 //! and directly for headless export and golden-image tests. It is one
 //! renderer for all three, so an export is what the canvas showed.
+// Shipped code returns errors; only tests may panic.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 pub mod spike;
 

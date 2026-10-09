@@ -6,10 +6,11 @@ finished items are ~~struck through~~ with "(done)", and anything deferred
 goes on a "Later:" line under the item.
 
 Status: Phase 0 is done bar Michael trying the shell by hand. Phase 1 is
-under way: you can draw frames, rectangles and ellipses, select, move and
-delete them, resize them by their handles or by number, undo and redo,
-change their fills, save and reopen the document, and export its frames
-as SVG and PNG from a terminal.
+well under way: you can draw frames, rectangles and ellipses; select,
+move, resize, rotate and delete them; give them fills and strokes; rename,
+hide and lock layers; undo and redo; save to a `.omavec` folder or a
+`.omavecz` file; and export frames as SVG and PNG from a terminal. None of
+it has been tried by hand yet.
 
 ## Borrowing from VectorCraft
 
@@ -242,7 +243,9 @@ reopen and export.
   and editing several nodes at once.
   Later: a node's opacity as a layer, not multiplied into its children;
   frames that clip what they draw (hit testing already respects it); a
-  stroke counted in hit testing and in a node's bounds.
+  stroke counted in hit testing and in a node's bounds; the hairline of
+  backdrop that shows between a fill and an outside stroke where their
+  antialiased edges meet.
 - Panels: layers (tree, rename, reorder by drag, hide, lock, multi-select),
   properties (Figma's right panel layout). Built so far: the layers panel
   (select, Shift-select, rename by double-click, hide and lock per row and

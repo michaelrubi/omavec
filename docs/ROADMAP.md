@@ -190,7 +190,8 @@ reopen and export.
   there are unsaved changes, and a question before New, Open, Quit or
   closing the window would throw them away. `.omavecz` is built in the
   engine (the same files zipped, the same bytes for the same document)
-  with its MIME type and launcher entry. Left: assets, recent files, and
+  with its MIME type and launcher entry; Save As takes a name ending in
+  `.omavecz`, and Open takes one, or the `document.json` in a folder. Left: assets, recent files, and
   autosave and crash recovery.
 - ~~Canvas: pan (Space/H/middle drag), zoom (Ctrl+wheel, Shift+0/1/2, pinch),
   pixel grid at high zoom, rulers.~~ (done) The wheel, middle drag,

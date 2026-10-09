@@ -116,7 +116,10 @@ impl App {
         (self.history, self.tools, self.page, self.path, self.drawn) = (History::new(document), Tools::default(), page, path, None);
     }
 
-    fn open(&mut self, folder: &Path) {
+    fn open(&mut self, path: &Path) {
+        // The file dialog can't pick a folder and a file both, so a folder
+        // is opened by the `document.json` in it.
+        let folder = if path.file_name().is_some_and(|name| name == "document.json") { path.parent().unwrap_or(path) } else { path };
         match file::open(folder) {
             Ok(document) => {
                 self.set_document(document, Some(folder.into()));
@@ -155,7 +158,7 @@ impl App {
                 dialog = dialog.set_directory(start);
             }
             let picked = match command {
-                Command::Open => dialog.set_title("Open an .omavec folder").pick_folder(),
+                Command::Open => dialog.set_title("Open a .omavecz, or the document.json in a .omavec folder").add_filter("Omavec documents", &["omavecz", "json"]).pick_file(),
                 _ => dialog.set_title("Save As").set_file_name("Untitled.omavec").save_file(),
             };
             let _ = tx.send(picked);
@@ -172,7 +175,8 @@ impl App {
         match (command, picked) {
             (Command::Open, Some(folder)) => self.open(&folder),
             (_, Some(mut folder)) => {
-                if folder.extension().is_none_or(|extension| extension != "omavec") {
+                // A folder unless it's named as the zipped kind.
+                if folder.extension().is_none_or(|extension| extension != "omavec" && extension != "omavecz") {
                     folder.as_mut_os_string().push(".omavec");
                 }
                 self.save_to(&folder);
@@ -650,6 +654,16 @@ mod tests {
         other.open(&folder);
         assert_eq!(other.history.document(), app.history.document());
         assert_eq!((other.path.as_deref(), other.history.is_dirty(), &other.status), (Some(folder.as_path()), false, &None));
+        // By the document.json inside it, as the file dialog picks it.
+        let (_, mut by_file, _) = self::app();
+        by_file.open(&folder.join("document.json"));
+        assert_eq!((by_file.history.document(), by_file.path.as_deref()), (app.history.document(), Some(folder.as_path())));
+        // And as one zipped file.
+        let zipped = folder.with_extension("omavecz");
+        app.save_to(&zipped);
+        by_file.open(&zipped);
+        by_file.update_title(&ctx);
+        assert_eq!((by_file.history.document(), by_file.title.as_str()), (app.history.document(), "Logo — Omavec"));
         // Opening something that isn't a document says so and changes nothing.
         other.open(&folder.join("pages"));
         assert!(other.status.as_ref().is_some_and(|(message, wrong)| *wrong && message.starts_with("Couldn't open: ")));

@@ -11,7 +11,7 @@ arch=('x86_64')
 url="https://github.com/michaelrubi/omavec"
 license=('GPL-3.0-or-later')
 depends=('gcc-libs' 'glibc' 'vulkan-icd-loader' 'wayland' 'libxkbcommon' 'fontconfig'
-         'hicolor-icon-theme')
+         'hicolor-icon-theme' 'shared-mime-info' 'xdg-desktop-portal')
 makedepends=('cargo' 'git')
 provides=('omavec')
 conflicts=('omavec')
@@ -42,4 +42,5 @@ package() {
   install -Dm755 target/release/omavec "$pkgdir/usr/bin/omavec"
   install -Dm644 assets/omavec.desktop "$pkgdir/usr/share/applications/omavec.desktop"
   install -Dm644 assets/omavec.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/omavec.svg"
+  install -Dm644 assets/omavec.xml "$pkgdir/usr/share/mime/packages/omavec.xml"
 }

@@ -7,4 +7,5 @@ Exec=omavec %f
 Icon=omavec
 Terminal=false
 Categories=Graphics;2DGraphics;VectorGraphics;
+MimeType=application/x-omavecz;
 StartupWMClass=omavec

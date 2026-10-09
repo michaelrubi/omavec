@@ -10,8 +10,12 @@
 //!
 //! Saving writes the same bytes for the same document, touches only the
 //! files that changed, and leaves alone whatever else is in the folder.
+//!
+//! `logo.omavecz` is the same files in a zip, for sending to someone or
+//! opening from a file manager.
 
 use std::collections::HashSet;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -31,6 +35,8 @@ pub enum FileError {
     Json { path: PathBuf, source: serde_json::Error },
     #[error("{} was saved by a newer Omavec (format {found}; this one reads up to {FORMAT})", path.display())]
     Newer { path: PathBuf, found: u32 },
+    #[error("{}: {source}", path.display())]
+    Zip { path: PathBuf, source: zip::result::ZipError },
     #[error("{}: {problem}", path.display())]
     Malformed { path: PathBuf, problem: String },
 }
@@ -71,31 +77,50 @@ fn write(path: &Path, bytes: &[u8]) -> Result<(), FileError> {
     if std::fs::read(path).is_ok_and(|old| old == bytes) {
         return Ok(());
     }
-    let partial = path.with_extension("json.partial");
+    let mut partial = path.as_os_str().to_owned();
+    partial.push(".partial");
     std::fs::write(&partial, bytes).map_err(io)?;
     std::fs::rename(&partial, path).map_err(io)
 }
 
-pub fn save(document: &Document, folder: &Path) -> Result<(), FileError> {
-    let pages = folder.join("pages");
-    std::fs::create_dir_all(&pages).map_err(|source| FileError::Io { path: pages.clone(), source })?;
-    let mut names = Vec::new();
+/// The document's files, by their place in its folder. The manifest is
+/// last: a folder is still the old document until it is written.
+fn files(document: &Document) -> Result<Vec<(String, Vec<u8>)>, FileError> {
+    let (mut files, mut names) = (Vec::new(), Vec::new());
     for (index, page) in document.pages.iter().enumerate() {
         let name = format!("{:02}-{}.json", index + 1, slug(&page.name));
-        let path = pages.join(&name);
-        write(&path, &json(&**page, &path)?)?;
+        let place = format!("pages/{name}");
+        files.push((place.clone(), json(&**page, Path::new(&place))?));
         names.push(name);
     }
-    // The manifest goes last: until it's written, the folder still opens as
-    // the document it was.
-    let manifest = folder.join("document.json");
-    write(&manifest, &json(&Manifest { format: FORMAT, next_id: document.next_id(), pages: names.clone() }, &manifest)?)?;
+    let manifest = Manifest { format: FORMAT, next_id: document.next_id(), pages: names };
+    files.push(("document.json".into(), json(&manifest, Path::new("document.json"))?));
+    Ok(files)
+}
+
+/// Whether `path` names the zipped form of a document.
+fn zipped(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| extension == "omavecz")
+}
+
+/// Saves `document` to `path`: a `.omavec` folder, or, if that is how the
+/// path ends, a `.omavecz` file, which is the same folder zipped.
+pub fn save(document: &Document, path: &Path) -> Result<(), FileError> {
+    let files = files(document)?;
+    if zipped(path) {
+        return write(path, &zip(&files).map_err(|source| FileError::Zip { path: path.into(), source })?);
+    }
+    let pages = path.join("pages");
+    std::fs::create_dir_all(&pages).map_err(|source| FileError::Io { path: pages.clone(), source })?;
+    for (place, bytes) in &files {
+        write(&path.join(place), bytes)?;
+    }
     // Pages that were deleted or renamed leave files behind.
     let io = |source| FileError::Io { path: pages.clone(), source };
     for entry in std::fs::read_dir(&pages).map_err(io)? {
         let entry = entry.map_err(io)?;
         let name = entry.file_name();
-        let stale = name.to_str().is_some_and(|name| name.ends_with(".json") && !names.iter().any(|kept| kept == name));
+        let stale = name.to_str().is_some_and(|name| name.ends_with(".json") && !files.iter().any(|(place, _)| place.strip_prefix("pages/") == Some(name)));
         if stale {
             std::fs::remove_file(entry.path()).map_err(|source| FileError::Io { path: entry.path(), source })?;
         }
@@ -103,23 +128,51 @@ pub fn save(document: &Document, folder: &Path) -> Result<(), FileError> {
     Ok(())
 }
 
-fn read<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, FileError> {
-    let bytes = std::fs::read(path).map_err(|source| FileError::Io { path: path.into(), source })?;
-    serde_json::from_slice(&bytes).map_err(|source| FileError::Json { path: path.into(), source })
+/// `files` as a zip archive. The same files give the same bytes: nothing in
+/// it depends on when it was made.
+fn zip(files: &[(String, Vec<u8>)]) -> Result<Vec<u8>, zip::result::ZipError> {
+    let mut archive = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated).last_modified_time(zip::DateTime::default());
+    for (place, bytes) in files {
+        archive.start_file(place.as_str(), options)?;
+        archive.write_all(bytes)?;
+    }
+    Ok(archive.finish()?.into_inner())
 }
 
-pub fn open(folder: &Path) -> Result<Document, FileError> {
-    let path = folder.join("document.json");
+/// Opens the document at `path`: a `.omavec` folder or a `.omavecz` file.
+pub fn open(path: &Path) -> Result<Document, FileError> {
+    if path.is_dir() {
+        return read_document(path, &|place| std::fs::read(path.join(place)).map_err(|source| FileError::Io { path: path.join(place), source }));
+    }
+    let bytes = std::fs::read(path).map_err(|source| FileError::Io { path: path.into(), source })?;
+    let archive = std::cell::RefCell::new(zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|source| FileError::Zip { path: path.into(), source })?);
+    read_document(path, &|place| {
+        let mut bytes = Vec::new();
+        let zip = |source| FileError::Zip { path: path.join(place), source };
+        archive.borrow_mut().by_name(place).map_err(zip)?.read_to_end(&mut bytes).map_err(|source| zip(source.into()))?;
+        Ok(bytes)
+    })
+}
+
+/// Reads a document whose files `read` fetches by their place in it. `root`
+/// is only for saying where a problem is.
+fn read_document(root: &Path, read: &dyn Fn(&str) -> Result<Vec<u8>, FileError>) -> Result<Document, FileError> {
+    fn parse<T: for<'de> Deserialize<'de>>(path: &Path, bytes: &[u8]) -> Result<T, FileError> {
+        serde_json::from_slice(bytes).map_err(|source| FileError::Json { path: path.into(), source })
+    }
+    let path = root.join("document.json");
+    let manifest = read("document.json")?;
     // Only the version at first: a newer format's manifest may not read as ours.
     #[derive(Deserialize)]
     struct Version {
         format: u32,
     }
-    let Version { format } = read(&path)?;
+    let Version { format } = parse(&path, &manifest)?;
     if format > FORMAT {
         return Err(FileError::Newer { path, found: format });
     }
-    let manifest: Manifest = read(&path)?;
+    let manifest: Manifest = parse(&path, &manifest)?;
     let mut pages = Vec::new();
     let mut seen = HashSet::new();
     for name in &manifest.pages {
@@ -127,8 +180,9 @@ pub fn open(folder: &Path) -> Result<Document, FileError> {
         if name.contains(['/', '\\']) || name.starts_with('.') {
             return Err(FileError::Malformed { path, problem: format!("\"{name}\" is not a page file name") });
         }
-        let path = folder.join("pages").join(name);
-        let page: Node = read(&path)?;
+        let place = format!("pages/{name}");
+        let path = root.join(&place);
+        let page: Node = parse(&path, &read(&place)?)?;
         if page.kind != NodeKind::Page {
             return Err(FileError::Malformed { path, problem: "the top node is not a page".into() });
         }

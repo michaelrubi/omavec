@@ -276,3 +276,48 @@ fn ids_in_the_pages_win_over_a_stale_next_id() {
     let mut opened = file::open(&folder).unwrap();
     assert_eq!(opened.create(NodeKind::Group, Size::ZERO).id, NodeId(6));
 }
+
+#[test]
+fn a_zipped_document_is_the_same_files_and_opens_the_same() {
+    let folder = folder("zipped-source");
+    let zipped = folder.with_file_name("zipped.omavecz");
+    let _ = std::fs::remove_file(&zipped);
+    let document = sample();
+    file::save(&document, &folder).unwrap();
+    file::save(&document, &zipped).unwrap();
+    assert!(zipped.is_file());
+    assert_eq!(file::open(&zipped).unwrap(), document);
+
+    // Every file of the folder, byte for byte, and nothing else.
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(&zipped).unwrap()).unwrap();
+    let mut names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+    names.sort();
+    assert_eq!(names, files(&folder));
+    for name in &names {
+        let mut inside = Vec::new();
+        std::io::Read::read_to_end(&mut archive.by_name(name).unwrap(), &mut inside).unwrap();
+        assert_eq!(inside, std::fs::read(folder.join(name)).unwrap(), "{name}");
+    }
+
+    // The same document zips to the same bytes, whenever it is saved.
+    let first = std::fs::read(&zipped).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let again = folder.with_file_name("zipped-again.omavecz");
+    file::save(&file::open(&zipped).unwrap(), &again).unwrap();
+    assert_eq!(std::fs::read(&again).unwrap(), first);
+}
+
+#[test]
+fn a_file_that_is_not_a_zipped_document_says_so() {
+    let path = folder("not-a-zip").with_file_name("not-a-zip.omavecz");
+    std::fs::write(&path, b"this is not a zip").unwrap();
+    assert!(matches!(file::open(&path), Err(FileError::Zip { .. })));
+    // A zip with something else in it.
+    let other = path.with_file_name("other.omavecz");
+    let mut archive = zip::ZipWriter::new(std::fs::File::create(&other).unwrap());
+    archive.start_file("hello.txt", zip::write::SimpleFileOptions::default()).unwrap();
+    std::io::Write::write_all(&mut archive, b"hello").unwrap();
+    archive.finish().unwrap();
+    let error = file::open(&other).unwrap_err().to_string();
+    assert!(error.contains("other.omavecz/document.json"), "{error}");
+}

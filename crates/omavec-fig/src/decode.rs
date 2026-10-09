@@ -63,6 +63,8 @@ fn read_and_inflate_chunk(data: &[u8], offset: &mut usize) -> Result<Vec<u8>, Fi
     decompress_chunk(chunk)
 }
 
+/// The kiwi message inside a `.fig` file (zipped or bare), as JSON. Byte
+/// arrays are summarised as `"<N bytes>"`.
 pub fn decode(file: &[u8]) -> Result<serde_json::Value, FigError> {
     if file.len() < 2 {
         return Err(FigError::NotAFig("file too short"));
@@ -103,12 +105,12 @@ pub fn decode(file: &[u8]) -> Result<serde_json::Value, FigError> {
     let kiwi_val = kiwi_schema::Value::decode(&schema, message_def.index, &data_bytes)
         .map_err(|()| FigError::Message("failed to decode kiwi message".to_string()))?;
 
+    // The container's version and the size of its schema aren't part of the
+    // message, but an import report wants them.
     let mut json_val = kiwi_to_json(&kiwi_val);
     if let serde_json::Value::Object(ref mut map) = json_val {
         map.insert("version".to_string(), serde_json::json!(version));
-        map.insert("fig_version".to_string(), serde_json::json!(version));
         map.insert("schema_definitions".to_string(), serde_json::json!(schema.defs.len()));
-        map.insert("schema_definition_count".to_string(), serde_json::json!(schema.defs.len()));
     }
 
     Ok(json_val)
@@ -148,6 +150,8 @@ fn kiwi_to_json(val: &kiwi_schema::Value) -> serde_json::Value {
     }
 }
 
+/// The node tree of a decoded message, in the text form of the fixtures'
+/// `.tree.txt`: one node per line, children indented and in order.
 pub fn tree(message: &serde_json::Value) -> Result<String, FigError> {
     let node_changes = message.get("nodeChanges")
         .and_then(|v| v.as_array())

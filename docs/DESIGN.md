@@ -98,7 +98,11 @@ Every visual node carries:
   or number can be bound to a variable.
 - **Strokes**: a stack of paints plus one stroke style: weight, align
   (inside/centre/outside), cap, join, miter limit, dashes, and an optional
-  **width profile** (widths at positions along each segment).
+  **width profile** (widths at positions along each segment). A stroke is
+  drawn as the area it covers: a centred stroke's outline, and for inside
+  or outside a stroke twice as wide cut to the half inside or outside the
+  shape. SVG has only centred strokes, so those export as `stroke`
+  attributes and the other two as the area, a filled path.
 - **Effects**: drop shadow, inner shadow, layer blur, background blur.
 - **Modifiers**: an ordered, live list of geometry operations: Offset Path,
   Outline Stroke, Warp/Envelope, Round Corners, Simplify. This is

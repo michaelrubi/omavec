@@ -229,11 +229,17 @@ reopen and export.
   linear/radial/angular/diamond gradients with on-canvas handles; the
   colour picker with eyedropper. Built so far: a stack of solid fills per
   node with opacity and visibility, Figma's defaults (grey shapes, white
-  frames), drawn by the canvas. The Design panel lists one selected
-  node's fills, top first, with a colour picker, opacity, a show/hide box
-  and add and remove; dragging in the picker is one undo step.
+  frames), and a stroke with its own stack of paints, a weight and a side
+  of the edge (inside, centre or outside), drawn as the area it covers
+  (`omavec_geom::stroke::outline`, on `vectorcraft-pathops`). The Design
+  panel lists one selected node's fills and stroke paints, top first,
+  with a colour picker, opacity, a show/hide box and add and remove, and
+  the stroke's weight and side; a drag on any of them is one undo step.
+  Left: blend modes, gradients, the eyedropper, caps, joins and dashes,
+  and editing several nodes at once.
   Later: a node's opacity as a layer, not multiplied into its children;
-  frames that clip what they draw (hit testing already respects it).
+  frames that clip what they draw (hit testing already respects it); a
+  stroke counted in hit testing and in a node's bounds.
 - Panels: layers (tree, rename, reorder by drag, hide, lock, multi-select),
   properties (Figma's right panel layout). Built so far: the layers list,
   front-most first, where a click selects.

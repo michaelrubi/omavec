@@ -2,7 +2,7 @@
 //! numbers that can be dragged or typed.
 
 use egui::{DragValue, Ui};
-use omavec_engine::{Color, Error, History, Node, NodeId, Paint, PaintKind};
+use omavec_engine::{Align, Color, Error, History, Node, NodeId, Paint, PaintKind};
 use omavec_geom::kurbo::{Affine, Point};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -68,33 +68,78 @@ impl Field {
     }
 }
 
-/// A change to one of a node's fills.
+/// A change to one of a stack of paints: a node's fills, or its stroke's.
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum FillEdit {
+enum PaintEdit {
     Color(usize, Color),
     Opacity(usize, f64),
     Visible(usize, bool),
     Remove(usize),
-    /// A new fill on top, in Figma's grey.
+    /// A new paint on top.
     Add,
 }
 
-impl FillEdit {
-    fn apply(self, node: &mut Node) {
-        let fill = |node: &mut Node, index: usize, change: &dyn Fn(&mut Paint)| {
-            if let Some(paint) = node.fills.get_mut(index) {
+impl PaintEdit {
+    /// Makes the change to `paints`; `new` is the colour Add starts with.
+    fn apply(self, paints: &mut Vec<Paint>, new: Color) {
+        let paint = |paints: &mut Vec<Paint>, index: usize, change: &dyn Fn(&mut Paint)| {
+            if let Some(paint) = paints.get_mut(index) {
                 change(paint);
             }
         };
         match self {
-            FillEdit::Color(index, color) => fill(node, index, &|paint| paint.kind = PaintKind::Solid { color }),
-            FillEdit::Opacity(index, opacity) => fill(node, index, &|paint| paint.opacity = opacity.clamp(0.0, 1.0)),
-            FillEdit::Visible(index, visible) => fill(node, index, &|paint| paint.visible = visible),
-            FillEdit::Remove(index) if index < node.fills.len() => drop(node.fills.remove(index)),
-            FillEdit::Remove(_) => {}
-            FillEdit::Add => node.fills.push(Paint::solid(Color::rgb(0xd9, 0xd9, 0xd9))),
+            PaintEdit::Color(index, color) => paint(paints, index, &|paint| paint.kind = PaintKind::Solid { color }),
+            PaintEdit::Opacity(index, opacity) => paint(paints, index, &|paint| paint.opacity = opacity.clamp(0.0, 1.0)),
+            PaintEdit::Visible(index, visible) => paint(paints, index, &|paint| paint.visible = visible),
+            PaintEdit::Remove(index) if index < paints.len() => drop(paints.remove(index)),
+            PaintEdit::Remove(_) => {}
+            PaintEdit::Add => paints.push(Paint::solid(new)),
         }
     }
+
+    /// Whether the widget that makes this edit is one that's dragged.
+    fn dragged(self) -> bool {
+        matches!(self, PaintEdit::Color(..) | PaintEdit::Opacity(..))
+    }
+}
+
+/// Figma's grey for a new fill, and its black for a new stroke.
+const NEW_FILL: Color = Color::rgb(0xd9, 0xd9, 0xd9);
+const NEW_STROKE: Color = Color::rgb(0, 0, 0);
+
+/// A stack of paints under `title`, the top one first as in Figma, and the
+/// edit the user made to it this frame, if any.
+fn paints(ui: &mut Ui, title: &str, paints: &[Paint]) -> Option<PaintEdit> {
+    let mut edit = None;
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.strong(title);
+        if ui.small_button("+").on_hover_text("Add one").clicked() {
+            edit = Some(PaintEdit::Add);
+        }
+    });
+    for (index, paint) in paints.iter().enumerate().rev() {
+        let PaintKind::Solid { color } = paint.kind;
+        ui.horizontal(|ui| {
+            let mut rgb = [color.r, color.g, color.b];
+            if ui.color_edit_button_srgb(&mut rgb).changed() {
+                edit = Some(PaintEdit::Color(index, Color::rgb(rgb[0], rgb[1], rgb[2])));
+            }
+            ui.monospace(String::from(color));
+            let mut percent = (paint.opacity * 100.0).round();
+            if ui.add(DragValue::new(&mut percent).range(0.0..=100.0).suffix("%")).changed() {
+                edit = Some(PaintEdit::Opacity(index, percent / 100.0));
+            }
+            let mut visible = paint.visible;
+            if ui.checkbox(&mut visible, "").on_hover_text("Show it").changed() {
+                edit = Some(PaintEdit::Visible(index, visible));
+            }
+            if ui.small_button("−").on_hover_text("Remove it").clicked() {
+                edit = Some(PaintEdit::Remove(index));
+            }
+        });
+    }
+    edit
 }
 
 #[derive(Default)]
@@ -136,7 +181,7 @@ impl Properties {
             return Ok(());
         };
         let Some(node) = history.document().node(*id) else { return Ok(()) };
-        let (values, fills) = (Field::ALL.map(|field| field.get(node)), node.fills.clone());
+        let (values, fills, stroke) = (Field::ALL.map(|field| field.get(node)), node.fills.clone(), node.stroke.clone());
         ui.label(&node.name);
         ui.add_space(4.0);
 
@@ -155,40 +200,28 @@ impl Properties {
             self.change(history, *id, field.step(), pointer_down, |node| field.set(node, value))?;
         }
 
-        ui.add_space(8.0);
-        let mut edit = None;
-        ui.horizontal(|ui| {
-            ui.strong("Fill");
-            if ui.small_button("+").on_hover_text("Add a fill").clicked() {
-                edit = Some(FillEdit::Add);
-            }
-        });
-        // The top fill first, as in Figma.
-        for (index, paint) in fills.iter().enumerate().rev() {
-            let PaintKind::Solid { color } = paint.kind;
-            ui.horizontal(|ui| {
-                let mut rgb = [color.r, color.g, color.b];
-                if ui.color_edit_button_srgb(&mut rgb).changed() {
-                    edit = Some(FillEdit::Color(index, Color::rgb(rgb[0], rgb[1], rgb[2])));
-                }
-                ui.monospace(String::from(color));
-                let mut percent = (paint.opacity * 100.0).round();
-                if ui.add(DragValue::new(&mut percent).range(0.0..=100.0).suffix("%")).changed() {
-                    edit = Some(FillEdit::Opacity(index, percent / 100.0));
-                }
-                let mut visible = paint.visible;
-                if ui.checkbox(&mut visible, "").on_hover_text("Show this fill").changed() {
-                    edit = Some(FillEdit::Visible(index, visible));
-                }
-                if ui.small_button("−").on_hover_text("Remove this fill").clicked() {
-                    edit = Some(FillEdit::Remove(index));
-                }
-            });
+        if let Some(edit) = paints(ui, "Fill", &fills) {
+            self.change(history, *id, "Fill", pointer_down && edit.dragged(), |node| edit.apply(&mut node.fills, NEW_FILL))?;
         }
-        if let Some(edit) = edit {
-            // Only a colour or an opacity is dragged; the rest are clicks.
-            let dragged = pointer_down && matches!(edit, FillEdit::Color(..) | FillEdit::Opacity(..));
-            self.change(history, *id, "Fill", dragged, |node| edit.apply(node))?;
+        if let Some(edit) = paints(ui, "Stroke", &stroke.paints) {
+            self.change(history, *id, "Stroke", pointer_down && edit.dragged(), |node| edit.apply(&mut node.stroke.paints, NEW_STROKE))?;
+        }
+        if !stroke.paints.is_empty() {
+            let (mut weight, mut align) = (stroke.weight, stroke.align);
+            ui.horizontal(|ui| {
+                ui.add(DragValue::new(&mut weight).speed(0.1).range(0.0..=f64::MAX).max_decimals(2).prefix("Weight "));
+                egui::ComboBox::from_id_salt("stroke align").selected_text(format!("{align:?}")).show_ui(ui, |ui| {
+                    for side in [Align::Inside, Align::Center, Align::Outside] {
+                        ui.selectable_value(&mut align, side, format!("{side:?}"));
+                    }
+                });
+            });
+            if weight != stroke.weight {
+                self.change(history, *id, "Stroke", pointer_down, |node| node.stroke.weight = weight)?;
+            }
+            if align != stroke.align {
+                self.change(history, *id, "Stroke", false, |node| node.stroke.align = align)?;
+            }
         }
         Ok(())
     }
@@ -274,31 +307,51 @@ mod tests {
     }
 
     #[test]
+    fn a_stroke_starts_black_and_dragging_its_weight_is_one_step() {
+        let (mut history, id) = rectangle();
+        let mut panel = Properties::default();
+        panel.change(&mut history, id, "Stroke", false, |node| PaintEdit::Add.apply(&mut node.stroke.paints, NEW_STROKE)).unwrap();
+        for weight in [1.5, 2.0, 4.0] {
+            panel.change(&mut history, id, "Stroke", true, |node| node.stroke.weight = weight).unwrap();
+        }
+        panel.settle(&mut history, false);
+        panel.change(&mut history, id, "Stroke", false, |node| node.stroke.align = Align::Outside).unwrap();
+        let stroke = |history: &History| history.document().node(id).unwrap().stroke.clone();
+        assert_eq!(stroke(&history), omavec_engine::Stroke { paints: vec![Paint::solid(NEW_STROKE)], weight: 4.0, align: Align::Outside });
+        history.undo();
+        assert_eq!(stroke(&history).align, Align::Inside);
+        history.undo();
+        assert_eq!(stroke(&history).weight, 1.0);
+        history.undo();
+        assert!(stroke(&history).paints.is_empty());
+    }
+
+    #[test]
     fn fills_are_edited_one_at_a_time() {
         let (mut history, id) = rectangle();
         let mut panel = Properties::default();
         let fills = |history: &History| history.document().node(id).unwrap().fills.clone();
-        let mut edit = |history: &mut History, edit: FillEdit| panel.change(history, id, "Fill", false, |node| edit.apply(node)).unwrap();
+        let mut edit = |history: &mut History, edit: PaintEdit| panel.change(history, id, "Fill", false, |node| edit.apply(&mut node.fills, NEW_FILL)).unwrap();
         let (grey, red) = (Color::rgb(0xd9, 0xd9, 0xd9), Color::rgb(255, 0, 0));
         assert_eq!(fills(&history), [Paint::solid(grey)]);
 
-        edit(&mut history, FillEdit::Add);
-        edit(&mut history, FillEdit::Color(1, red));
-        edit(&mut history, FillEdit::Opacity(1, 0.4));
-        edit(&mut history, FillEdit::Visible(0, false));
+        edit(&mut history, PaintEdit::Add);
+        edit(&mut history, PaintEdit::Color(1, red));
+        edit(&mut history, PaintEdit::Opacity(1, 0.4));
+        edit(&mut history, PaintEdit::Visible(0, false));
         let expected = [Paint { visible: false, ..Paint::solid(grey) }, Paint { opacity: 0.4, ..Paint::solid(red) }];
         assert_eq!(fills(&history), expected);
         // Opacity stays between nothing and everything.
-        edit(&mut history, FillEdit::Opacity(1, 7.0));
+        edit(&mut history, PaintEdit::Opacity(1, 7.0));
         assert_eq!(fills(&history)[1].opacity, 1.0);
         history.undo();
 
-        edit(&mut history, FillEdit::Remove(0));
+        edit(&mut history, PaintEdit::Remove(0));
         assert_eq!(fills(&history), expected[1..]);
         // A fill that isn't there: nothing happens, and nothing to undo.
         let steps = history.undo_name().map(str::to_owned);
-        edit(&mut history, FillEdit::Remove(5));
-        edit(&mut history, FillEdit::Color(5, grey));
+        edit(&mut history, PaintEdit::Remove(5));
+        edit(&mut history, PaintEdit::Color(5, grey));
         assert_eq!(fills(&history), expected[1..]);
         assert_eq!(history.undo_name().map(str::to_owned), steps);
         history.undo();

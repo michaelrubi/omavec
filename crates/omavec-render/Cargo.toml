@@ -17,3 +17,7 @@ pollster = "1.0.1"
 # against. Without `debug_layers` it doesn't report whether a frame
 # overflowed its buffers.
 vello = { version = "0.11.0", features = ["debug_layers"] }
+parley = "0.12"
+fontique = "0.12"
+skrifa = "0.44.0"
+

@@ -230,8 +230,9 @@ logo.omavec/
 - Text formatting is deterministic (sorted keys, fixed float formatting),
   so saving an unchanged document changes nothing in git.
 - Fonts are referenced by family/style, not embedded.
-- A zipped single-file form (`.omavecz`) is planned for sending files to
-  people (see [DECISIONS.md](DECISIONS.md), "Still open").
+- A `.omavecz` is the same folder zipped, for sending files to people and
+  for opening from a file manager. Omavec opens and saves both; the folder
+  is the one to keep in git.
 
 ### Import and export
 
@@ -275,9 +276,10 @@ window and no GPU.
   torn off into their own windows (egui viewports), so Hyprland can tile
   them. Tablet pressure through the Wayland tablet protocol, ported from
   Omapix's `tablet.rs`, for the pencil and width tools.
-- **Keyboard first**: Figma shortcuts, a command palette that lists every
-  `Command`, and Vim-style keys where they don't fight Figma (see
-  [DECISIONS.md](DECISIONS.md), "Still open").
+- **Keyboard first**: Figma shortcuts; a command palette that lists every
+  `Command` (Ctrl+K, Ctrl+/); `:` to open it as a command line that takes
+  arguments; and hjkl nudging as a setting, off by default, because H, K
+  and L are Figma's Hand, Scale and Line.
 - **Install**: `make install` to `~/.local`, plus an AUR `PKGBUILD`, a
   `.desktop` file with a MIME type for `.omavec`, and an icon.
 

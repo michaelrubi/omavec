@@ -6,10 +6,9 @@ finished items are ~~struck through~~ with "(done)", and anything deferred
 goes on a "Later:" line under the item.
 
 Status: Phase 0 under way. The workspace, the app shell and the canvas
-exist, and all six spikes are done with their numbers in DESIGN.md,
-"Phase 0 findings". What's left of Phase 0 is Michael's: try the shell
-from the installed binary, and decide the first two "Still open" items in
-DECISIONS.md.
+exist, all six spikes are done with their numbers in DESIGN.md, "Phase 0
+findings", and the open decisions are made. What's left of Phase 0 is for
+Michael to try the shell from the installed binary. Phase 1 has begun.
 
 ## Borrowing from VectorCraft
 
@@ -79,8 +78,8 @@ go into DESIGN.md.
   `vectorcraft-pathops`, pinned to one commit, with one kurbo (0.13.1) in
   the tree. `NOTICE` carries VectorCraft's copyright and licence. CI is a
   GitHub Actions workflow.
-  Later: a MIME type for `.omavec` in the `.desktop` file, once the format
-  is decided (folder or single file).
+  Later: a MIME type for `.omavecz` in the `.desktop` file, when Phase 1
+  can open one.
 - ~~App shell: an eframe window with the Omarchy theme (ported `theme.rs`),
   a menu bar, empty left (layers) and right (properties) panels, and the
   canvas in the middle.~~ (done) The theme follows Omarchy live. The first
@@ -151,8 +150,12 @@ go into DESIGN.md.
   prints a tree, or the whole message with `--json`.
   Later: add two or three of Michael's own files to
   `crates/omavec-fig/tests/fixtures/` before Phase 7.
-- Decide the first two "Still open" items in DECISIONS.md, and item 5
-  (VectorCraft as a git dependency or vendored).
+- ~~Decide the first two "Still open" items in DECISIONS.md, and item 5
+  (VectorCraft as a git dependency or vendored).~~ (done) Figma's letters
+  win, with a command palette, a `:` command line and hjkl nudging as an
+  off-by-default setting; the `.omavec` folder is canonical, with a zipped
+  `.omavecz` for sending and for file managers; VectorCraft is a pinned
+  git dependency.
 
 Exit: the shell runs from `make install` in the Omarchy theme, and every
 spike has numbers and a decision written down.
@@ -167,7 +170,8 @@ reopen and export.
   errors instead of panicking, as VectorCraft enforces with clippy lints
   (`unwrap_used`, `expect_used`, `panic` denied outside tests).
 - `.omavec` folder format: deterministic JSON, format version, assets by
-  hash. Save, open, recent files, autosave and crash recovery.
+  hash. Save, open, recent files, autosave and crash recovery. Then
+  `.omavecz`, the same folder zipped, with its MIME type.
 - Canvas: pan (Space/H/middle drag), zoom (Ctrl+wheel, Shift+0/1/2, pinch),
   pixel grid at high zoom, rulers. Phase 0 already built wheel, middle
   drag and Space+drag panning, Ctrl+wheel and pinch zoom about the
@@ -195,6 +199,8 @@ reopen and export.
   CLI; `vello_cpu` for headless PNG. `vectorcraft-svg`'s writer is the
   reference for the SVG side.
 - `OMAVEC_SCRIPT` replay and the egui `Harness` for UI tests.
+- Command palette (Ctrl+K, Ctrl+/) listing every `Command`, and `:` to
+  open it as a command line.
 
 Exit: draw a few shapes in two frames, style them, save, reopen, undo
 through the session, and export the frames as SVG and PNG from the app and

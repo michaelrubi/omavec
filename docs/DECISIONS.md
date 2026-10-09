@@ -43,15 +43,30 @@ new one below it, so the history stays readable.
 These came up while scoping and don't block Phase 0. Decide them when the
 phase that needs them starts.
 
-1. **Vim-style keys versus Figma letters.** Figma already uses H (hand),
+1. ~~**Vim-style keys versus Figma letters.** Figma already uses H (hand),
    K (scale) and L (line), so hjkl can't move things by default. Proposal:
    a command palette (Ctrl+K, and Ctrl+/ as in Figma) plus a `:` command
    line, with hjkl nudging only in vector edit mode or behind a setting.
-   Decide in Phase 1.
-2. **Folder or single file.** A folder bundle diffs best in git but is
+   Decide in Phase 1.~~
+   **Decided (9 October 2026; Michael left it to Claude's judgement).**
+   Figma's letters always win. The Vim layer is the command palette on
+   Ctrl+K and Ctrl+/, and `:` opening the same palette as a command line
+   that takes arguments (`:zoom 200`, `:export svg`). hjkl nudging is a
+   setting, off by default, and not a vector-edit-mode special case: H, K
+   and L are tools in that mode too, so a mode switch would still steal
+   them. With the setting on, those three tools are reached from the
+   toolbar and the palette.
+2. ~~**Folder or single file.** A folder bundle diffs best in git but is
    awkward in file pickers and for `xdg-open`. Proposal: the folder is the
    canonical format; a zipped `.omavecz` is offered for sending to people.
-   Decide in Phase 1.
+   Decide in Phase 1.~~
+   **Decided (9 October 2026; Michael left it to Claude's judgement).**
+   The `.omavec` folder is the canonical format: it is what Save writes,
+   what git tracks and what `omavec path/to/logo.omavec` opens. A
+   `.omavecz` is the same folder zipped, for sending to people and for
+   opening from a file manager; Omavec opens and saves both, and the
+   `.desktop` file's MIME type is the `.omavecz` one, since a folder can't
+   have one. The folder comes first in Phase 1 and the zip follows it.
 3. **A shared `oma-ui` crate.** Theme loading, tablet input and the
    Wayland clipboard are now written (or about to be) in three apps.
    Extracting them into a shared crate is worth it once Omavec needs them,

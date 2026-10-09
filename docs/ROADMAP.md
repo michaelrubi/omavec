@@ -5,8 +5,10 @@ the architecture; [DECISIONS.md](DECISIONS.md) records why. As in Omapix,
 finished items are ~~struck through~~ with "(done)", and anything deferred
 goes on a "Later:" line under the item.
 
-Status: Phase 0 under way. The workspace and the app shell exist; the
-spikes are next.
+Status: Phase 0 under way. The workspace, the app shell and the canvas
+exist, and four of the six spikes are done (renderer, effects, pathops,
+.fig). The vector network and text spikes and the two format decisions
+are left.
 
 ## Borrowing from VectorCraft
 
@@ -83,36 +85,63 @@ go into DESIGN.md.
   canvas in the middle.~~ (done) The theme follows Omarchy live. The first
   two `Command`s are Quit (Ctrl+Q) and Show/Hide UI (Ctrl+\, as in Figma),
   tested headless.
-- **Spike: canvas renderer.** vello 0.11 renders into a texture on
+- ~~**Spike: canvas renderer.** vello 0.11 renders into a texture on
   egui-wgpu's device (both use wgpu 30) and shows in the canvas panel.
   Against it, VectorCraft's approach: `vello_cpu` on a worker thread,
   uploaded as an egui texture, with the last frame reprojected while the
   next renders (it reports 20,000 shapes in 27 ms per retina frame). Pan
   and zoom with 10,000 random cubic paths in both; record frame times at
   1×, 64× and 0.05× zoom, and pick one. If `vello_cpu` holds up, the
-  canvas and headless export share one renderer.
-- **Spike: blurs and shadows.** Prototype a drop shadow and a layer blur
+  canvas and headless export share one renderer.~~ (done) **`vello_cpu`
+  on a worker thread.** At 2560 × 1440 it draws the 10,000 paths in 1.3 to
+  2.7 ms at the three zooms, plus 2.6 ms to upload the frame; vello on the
+  integrated GPU takes 3 to 5 ms and leaves a wrong frame on screen at 64×
+  unless off-screen paths are skipped first. The numbers and reasons are
+  in DESIGN.md, "Phase 0 findings". The winner is already the app's
+  canvas (`crates/omavec/src/canvas.rs`): `OMAVEC_BLOBS=10000 omavec`
+  shows the test scene to pan and zoom by hand, with the zoom and the
+  last frame's time in the corner.
+  Later: delete `examples/canvas_bench.rs`, the `vello` dev-dependency and
+  `omavec_render::spike` once documents can be drawn.
+- ~~**Spike: blurs and shadows.** Prototype a drop shadow and a layer blur
   on an arbitrary path with the renderer picked above. VectorCraft draws
   both as `vello_cpu` filter layers (`crates/render/src/fx.rs`): start
   there; with vello on the GPU, find what it can blur today or add a
-  render-to-texture pass. Record the cost.
+  render-to-texture pass. Record the cost.~~ (done) Both work as
+  `vello_cpu` filter layers drawn on a small single-threaded context and
+  composited as an image (`examples/effects.rs`). About 2 ms for a 300 px
+  shape and 15 to 30 ms for a 1,200 px one, so Phase 5 caches them per
+  node and zoom; rounded-rectangle shadows take a shortcut that costs
+  nothing.
 - **Spike: vector network.** `VectorNetwork` with vertices, segments and
   regions; find regions (smallest faces) from the planar graph; convert to
   `BezPath` and to and from `vectorcraft_geom::PathData`; property tests
   on random graphs.
-- **Spike: vectorcraft-pathops.** Add `vectorcraft-geom` and
+- ~~**Spike: vectorcraft-pathops.** Add `vectorcraft-geom` and
   `vectorcraft-pathops` as git dependencies pinned to a commit.
   Union/subtract/intersect/exclude two and twenty overlapping curved
   shapes, and get Shape Builder regions; record time, anchor count and
   behaviour on coincident edges and tangencies. Fall back to raw
   `linesweeper` or `i_overlay` only for what it gets wrong. Check its
-  kurbo matches vello's.
+  kurbo matches vello's.~~ (done) It gets nothing wrong that the spike
+  could find: 63 µs for two circles, 4 ms for twenty shapes, 18 ms for
+  Shape Builder's arrangement of those twenty, results within 0.04% of
+  the inputs on a point grid, no panics on shared edges, identical shapes
+  or tangencies, and one kurbo in the tree. No fallback is needed
+  (`examples/pathops.rs`; table in DESIGN.md).
 - **Spike: text.** Lay out a line with parley using a system font found by
   fontique, draw it with the canvas renderer, and turn it into outlines
   with skrifa. Read `vectorcraft-text`'s font catalogue and outline code
   first.
-- **Spike: .fig.** Decode a real `.fig` ("Save local copy") with
-  `kiwi-schema` and dump its node tree as JSON. Start the fixture folder.
+- ~~**Spike: .fig.** Decode a real `.fig` ("Save local copy") with
+  `kiwi-schema` and dump its node tree as JSON. Start the fixture
+  folder.~~ (done) `omavec_fig::decode` reads four real files from 2022 to
+  2026 (deflate and zstd, zipped and bare) and a test checks their node
+  trees against fig2sketch's decoder. `kiwi-schema` 0.2.1 needed no
+  patching. `cargo run -p omavec-fig --example fig_dump -- file.fig`
+  prints a tree, or the whole message with `--json`.
+  Later: add two or three of Michael's own files to
+  `crates/omavec-fig/tests/fixtures/` before Phase 7.
 - Decide the first two "Still open" items in DECISIONS.md, and item 5
   (VectorCraft as a git dependency or vendored).
 
@@ -131,7 +160,10 @@ reopen and export.
 - `.omavec` folder format: deterministic JSON, format version, assets by
   hash. Save, open, recent files, autosave and crash recovery.
 - Canvas: pan (Space/H/middle drag), zoom (Ctrl+wheel, Shift+0/1/2, pinch),
-  pixel grid at high zoom, rulers.
+  pixel grid at high zoom, rulers. Phase 0 already built wheel, middle
+  drag and Space+drag panning, Ctrl+wheel and pinch zoom about the
+  pointer, and Ctrl+= / Ctrl+- / Shift+0; the Hand tool, zoom to fit and
+  to selection, the grid and rulers are left.
 - Selection: click, Shift+click, marquee, deep select (Ctrl+click), select
   in group (double-click / Enter), Esc to parent.
 - Tools as in `vectorcraft-tools`: pointer events in, Begin/Preview/Commit
@@ -258,9 +290,10 @@ The Figma half: screens.
 - Layout grids (columns, rows, grid) on frames.
 - Images: drag-in and paste, fill/fit/crop/tile, crop on canvas, image as
   a fill on any shape.
-- Effects: drop shadow, inner shadow, layer blur, background blur
-  (approach from Phase 0's spike; with `vello_cpu`, port VectorCraft's
-  filter layers).
+- Effects: drop shadow, inner shadow, layer blur, background blur, as
+  `vello_cpu` filter layers drawn off to the side and cached per node and
+  zoom (Phase 0's `examples/effects.rs`; VectorCraft's
+  `crates/render/src/fx.rs` for inner shadows and the cache).
 - Corner smoothing (Figma's squircle corners) on frames and rectangles.
 - Clip content, masks (use a shape as a mask, Ctrl+Alt+M).
 - Performance pass: a 2,000-frame document stays at display rate.

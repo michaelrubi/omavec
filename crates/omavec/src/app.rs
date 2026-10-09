@@ -48,6 +48,8 @@ impl App {
             Command::ZoomIn => self.canvas.zoom_by(2.0),
             Command::ZoomOut => self.canvas.zoom_by(0.5),
             Command::ZoomTo100 => self.canvas.zoom_by(1.0 / self.canvas.view.zoom),
+            Command::ToggleRulers => self.canvas.rulers = !self.canvas.rulers,
+            Command::TogglePixelGrid => self.canvas.pixel_grid = !self.canvas.pixel_grid,
         }
     }
 
@@ -66,7 +68,14 @@ impl App {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| self.menu_item(ui, Command::Quit));
             ui.menu_button("View", |ui| {
-                for command in [Command::ZoomIn, Command::ZoomOut, Command::ZoomTo100, Command::ToggleUi] {
+                for command in [
+                    Command::ZoomIn,
+                    Command::ZoomOut,
+                    Command::ZoomTo100,
+                    Command::ToggleRulers,
+                    Command::TogglePixelGrid,
+                    Command::ToggleUi,
+                ] {
                     self.menu_item(ui, command);
                 }
             });
@@ -108,7 +117,7 @@ impl App {
                     ui.take_available_space();
                 });
         }
-        egui::CentralPanel::no_frame().show(ui, |ui| self.canvas.show(ui, self.theme.backdrop())).inner
+        egui::CentralPanel::no_frame().show(ui, |ui| self.canvas.show(ui, &self.theme)).inner
     }
 }
 
@@ -190,5 +199,31 @@ mod tests {
         frame(&ctx, &mut app, key(Key::Num0, Modifiers::SHIFT));
         assert_eq!(app.canvas.view.zoom, 1.0);
         assert_eq!(in_the_middle(&app), before);
+    }
+
+    #[test]
+    fn shift_r_toggles_rulers() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_theme(Theme::default(), None);
+        assert!(!app.canvas.rulers);
+
+        frame(&ctx, &mut app, key(Key::R, Modifiers::SHIFT));
+        assert!(app.canvas.rulers);
+
+        frame(&ctx, &mut app, key(Key::R, Modifiers::SHIFT));
+        assert!(!app.canvas.rulers);
+    }
+
+    #[test]
+    fn shift_quote_toggles_pixel_grid() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_theme(Theme::default(), None);
+        assert!(app.canvas.pixel_grid);
+
+        frame(&ctx, &mut app, key(Key::Quote, Modifiers::SHIFT));
+        assert!(!app.canvas.pixel_grid);
+
+        frame(&ctx, &mut app, key(Key::Quote, Modifiers::SHIFT));
+        assert!(app.canvas.pixel_grid);
     }
 }

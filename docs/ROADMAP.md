@@ -175,8 +175,8 @@ reopen and export.
 - Canvas: pan (Space/H/middle drag), zoom (Ctrl+wheel, Shift+0/1/2, pinch),
   pixel grid at high zoom, rulers. Phase 0 already built wheel, middle
   drag and Space+drag panning, Ctrl+wheel and pinch zoom about the
-  pointer, and Ctrl+= / Ctrl+- / Shift+0; the Hand tool, zoom to fit and
-  to selection, the grid and rulers are left.
+  pointer, and Ctrl+= / Ctrl+- / Shift+0; the pixel grid and rulers are
+  built and only the Hand tool and zoom to fit and to selection are left.
 - Selection: click, Shift+click, marquee, deep select (Ctrl+click), select
   in group (double-click / Enter), Esc to parent.
 - Tools as in `vectorcraft-tools`: pointer events in, Begin/Preview/Commit

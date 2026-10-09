@@ -304,6 +304,7 @@ Figma's defaults, plus Illustrator's letters for the tools Figma lacks.
 | Shift+1 / Shift+2 | Zoom to fit / selection | Ctrl+K, Ctrl+/ | Command palette |
 | Ctrl+= / Ctrl+- | Zoom in / out | Shift+0 | Zoom to 100% |
 | Ctrl+\ | Show/hide UI | Ctrl+Q | Quit |
+| Shift+R | Rulers | Shift+' | Pixel grid |
 
 On the canvas: the wheel pans, Ctrl+wheel or a pinch zooms about the
 pointer, and middle drag or Space+drag pans.

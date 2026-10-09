@@ -13,6 +13,9 @@ use egui::{Color32, ColorImage, Key, PointerButton, Pos2, Rect, Sense, TextureHa
 use omavec_geom::kurbo::{Affine, Point, Vec2};
 use omavec_render::{DisplayList, Renderer, peniko};
 
+use crate::rulers;
+use crate::theme::Theme;
+
 /// Figma's zoom range: 2% to 25,600%.
 const ZOOM_RANGE: (f64, f64) = (0.02, 256.0);
 
@@ -97,6 +100,8 @@ fn worker() -> (Sender<Request>, Receiver<Drawn>) {
 
 pub struct Canvas {
     pub view: View,
+    pub rulers: bool,
+    pub pixel_grid: bool,
     list: Arc<DisplayList>,
     requests: Sender<Request>,
     frames: Receiver<Drawn>,
@@ -113,7 +118,7 @@ pub struct Canvas {
 impl Canvas {
     pub fn new(list: DisplayList, centre: Option<Point>) -> Self {
         let (requests, frames) = worker();
-        Self { view: View::default(), list: Arc::new(list), requests, frames, asked: None, shown: None, size: Vec2::ZERO, centre }
+        Self { view: View::default(), rulers: false, pixel_grid: true, list: Arc::new(list), requests, frames, asked: None, shown: None, size: Vec2::ZERO, centre }
     }
 
     /// Zooms by `factor` about the middle of the canvas.
@@ -123,7 +128,7 @@ impl Canvas {
 
     /// Lays the canvas out in what's left of `ui`, handles panning and
     /// zooming, and returns the rectangle it got.
-    pub fn show(&mut self, ui: &mut Ui, backdrop: Color32) -> Rect {
+    pub fn show(&mut self, ui: &mut Ui, theme: &Theme) -> Rect {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         let from_corner = |p: Pos2| Vec2::new(f64::from(p.x - rect.min.x), f64::from(p.y - rect.min.y));
         let to_screen = |v: Vec2| Pos2::new(rect.min.x + v.x as f32, rect.min.y + v.y as f32);
@@ -163,6 +168,7 @@ impl Canvas {
         let pixels_per_point = ui.ctx().pixels_per_point();
         let pixels = |points: f32| (points * pixels_per_point).round().clamp(0.0, f32::from(u16::MAX)) as u16;
         let size = [pixels(rect.width()), pixels(rect.height())];
+        let backdrop = theme.backdrop();
         let want = (self.view, size, backdrop);
         if self.asked != Some(want) && size[0] > 0 && size[1] > 0 {
             let request = Request { ctx: ui.ctx().clone(), list: self.list.clone(), view: self.view, size, pixels_per_point, backdrop };
@@ -172,8 +178,8 @@ impl Canvas {
         }
 
         let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 0.0, backdrop);
-        if let Some((texture, drawn_for, took)) = &self.shown {
+        painter.rect_filled(rect, 0.0, theme.backdrop());
+        if let Some((texture, drawn_for, _)) = &self.shown {
             // Until the frame for this view arrives, the last one stands in,
             // moved and scaled to where its pixels now belong.
             let [width, height] = texture.size();
@@ -184,12 +190,15 @@ impl Canvas {
             );
             let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
             painter.image(texture.id(), place, uv, Color32::WHITE);
-            if !self.list.items.is_empty() {
-                // Phase 0's readout, while the only thing to draw is the test scene.
-                let text = format!("{:.0}%  {:.1} ms  {} paths", self.view.zoom * 100.0, took.as_secs_f64() * 1000.0, self.list.items.len());
-                let at = rect.left_bottom() + egui::vec2(8.0, -8.0);
-                painter.text(at, egui::Align2::LEFT_BOTTOM, text, egui::FontId::monospace(12.0), Color32::WHITE);
-            }
+        }
+        rulers::paint(&painter, rect, self.view, theme, self.rulers, self.pixel_grid);
+        if let Some((_, _, took)) = &self.shown
+            && !self.list.items.is_empty()
+        {
+            // Phase 0's readout, while the only thing to draw is the test scene.
+            let text = format!("{:.0}%  {:.1} ms  {} paths", self.view.zoom * 100.0, took.as_secs_f64() * 1000.0, self.list.items.len());
+            let at = rect.left_bottom() + egui::vec2(8.0, -8.0);
+            painter.text(at, egui::Align2::LEFT_BOTTOM, text, egui::FontId::monospace(12.0), Color32::WHITE);
         }
         rect
     }
@@ -251,7 +260,7 @@ mod tests {
             harness
         }
 
-        fn frame(&mut self, events: Vec<Event>) {
+        fn frame(&mut self, events: Vec<Event>) -> Rect {
             self.time += 0.05;
             let input = egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))),
@@ -260,11 +269,13 @@ mod tests {
                 ..Default::default()
             };
             let canvas = &mut self.canvas;
+            let mut rect = Rect::NOTHING;
             let mut output = self.ctx.run_ui(input, |ui| {
-                egui::CentralPanel::no_frame().show(ui, |ui| canvas.show(ui, Color32::from_gray(30)));
+                rect = egui::CentralPanel::no_frame().show(ui, |ui| canvas.show(ui, &Theme::default())).inner;
             });
             // There's no renderer to upload textures to.
             output.textures_delta.clear();
+            rect
         }
 
         /// A wheel turn, and the frames egui spreads its scroll over.
@@ -340,5 +351,22 @@ mod tests {
         // A still canvas asks for nothing more.
         harness.frame(vec![]);
         assert!(harness.canvas.frames.recv_timeout(Duration::from_millis(100)).is_err());
+    }
+
+    #[test]
+    fn rulers_and_pixel_grid_do_not_change_canvas_rect_or_panic() {
+        let mut harness_off = Harness::new();
+        harness_off.canvas.rulers = false;
+        harness_off.canvas.pixel_grid = false;
+        harness_off.canvas.view.zoom = 8.0;
+        let rect_off = harness_off.frame(vec![]);
+
+        let mut harness_on = Harness::new();
+        harness_on.canvas.rulers = true;
+        harness_on.canvas.pixel_grid = true;
+        harness_on.canvas.view.zoom = 8.0;
+        let rect_on = harness_on.frame(vec![]);
+
+        assert_eq!(rect_off, rect_on);
     }
 }

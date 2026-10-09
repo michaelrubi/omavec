@@ -1,6 +1,7 @@
 mod app;
 mod canvas;
 mod commands;
+mod rulers;
 mod theme;
 
 use eframe::egui_wgpu::WgpuSetup;

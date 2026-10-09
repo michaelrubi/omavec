@@ -10,10 +10,20 @@ pub enum Command {
     ZoomIn,
     ZoomOut,
     ZoomTo100,
+    ToggleRulers,
+    TogglePixelGrid,
 }
 
 impl Command {
-    pub const ALL: [Command; 5] = [Command::Quit, Command::ToggleUi, Command::ZoomIn, Command::ZoomOut, Command::ZoomTo100];
+    pub const ALL: [Command; 7] = [
+        Command::Quit,
+        Command::ToggleUi,
+        Command::ZoomIn,
+        Command::ZoomOut,
+        Command::ZoomTo100,
+        Command::ToggleRulers,
+        Command::TogglePixelGrid,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -22,6 +32,8 @@ impl Command {
             Command::ZoomIn => "Zoom In",
             Command::ZoomOut => "Zoom Out",
             Command::ZoomTo100 => "Zoom to 100%",
+            Command::ToggleRulers => "Rulers",
+            Command::TogglePixelGrid => "Pixel Grid",
         }
     }
 
@@ -33,6 +45,8 @@ impl Command {
             Command::ZoomIn => (Modifiers::COMMAND, Key::Equals),
             Command::ZoomOut => (Modifiers::COMMAND, Key::Minus),
             Command::ZoomTo100 => (Modifiers::SHIFT, Key::Num0),
+            Command::ToggleRulers => (Modifiers::SHIFT, Key::R),
+            Command::TogglePixelGrid => (Modifiers::SHIFT, Key::Quote),
         };
         Some(KeyboardShortcut::new(modifiers, key))
     }

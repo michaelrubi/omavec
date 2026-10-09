@@ -186,10 +186,10 @@ reopen and export.
   leaves the rest of the folder alone; opening refuses a newer format and
   names what is wrong with a damaged or badly merged folder. New
   (Ctrl+N), Open (Ctrl+O), Save (Ctrl+S) and Save As (Ctrl+Shift+S) in
-  the app, `omavec logo.omavec` from a terminal, and a dot in the title
-  while there are unsaved changes. Left: assets, recent files, autosave
-  and crash recovery, asking before unsaved changes are thrown away, and
-  `.omavecz`.
+  the app, `omavec logo.omavec` from a terminal, a dot in the title while
+  there are unsaved changes, and a question before New, Open, Quit or
+  closing the window would throw them away. Left: assets, recent files,
+  autosave and crash recovery, and `.omavecz`.
 - Canvas: pan (Space/H/middle drag), zoom (Ctrl+wheel, Shift+0/1/2, pinch),
   pixel grid at high zoom, rulers. Phase 0 already built wheel, middle
   drag and Space+drag panning, Ctrl+wheel and pinch zoom about the

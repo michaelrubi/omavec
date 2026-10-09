@@ -39,6 +39,20 @@ pub struct App {
     status: Option<(String, bool)>,
     /// The window title as last set.
     title: String,
+    /// A command that would throw away unsaved changes, waiting for an answer.
+    confirm: Option<Command>,
+    /// What to carry on with once a save asked for by that answer is done.
+    after_save: Option<Command>,
+    /// The window may close: its changes are saved or given up.
+    closing: bool,
+}
+
+/// The answers to "save your changes first?".
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Choice {
+    Save,
+    Discard,
+    Cancel,
 }
 
 impl App {
@@ -70,7 +84,7 @@ impl App {
         canvas.readout = blobs.is_some();
         let document = Document::default();
         let page = document.pages[0].id;
-        Self { theme, theme_rx: None, show_ui: true, canvas, history: History::new(document), tools: Tools::default(), properties: Properties::default(), page, drawn: None, spike: blobs.is_some(), path: None, dialog: None, status: None, title: String::new() }
+        Self { theme, theme_rx: None, show_ui: true, canvas, history: History::new(document), tools: Tools::default(), properties: Properties::default(), page, drawn: None, spike: blobs.is_some(), path: None, dialog: None, status: None, title: String::new(), confirm: None, after_save: None, closing: false }
     }
 
     fn say(&mut self, message: impl Into<String>, wrong: bool) {
@@ -111,7 +125,11 @@ impl App {
                 self.path = Some(folder.into());
                 self.say(format!("Saved {}", name_of(folder)), false);
             }
-            Err(error) => self.say(format!("Couldn't save: {error}"), true),
+            Err(error) => {
+                // Whatever was waiting on this save doesn't happen.
+                self.after_save = None;
+                self.say(format!("Couldn't save: {error}"), true);
+            }
         }
     }
 
@@ -151,19 +169,46 @@ impl App {
                 }
                 self.save_to(&folder);
             }
-            (_, None) => {}
+            (_, None) => self.after_save = None,
+        }
+    }
+
+    /// Does what New, Open and Quit do, with nothing left to lose.
+    fn proceed(&mut self, command: Command, ctx: &egui::Context) {
+        match command {
+            Command::New => self.set_document(Document::default(), None),
+            Command::Open => self.ask(command, ctx),
+            _ => {
+                self.closing = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
+    }
+
+    /// The answer to the question `confirm` put.
+    fn decide(&mut self, choice: Choice, ctx: &egui::Context) {
+        let Some(command) = self.confirm.take() else { return };
+        match choice {
+            Choice::Save => {
+                self.after_save = Some(command);
+                self.run(Command::Save, ctx);
+            }
+            Choice::Discard => self.proceed(command, ctx),
+            Choice::Cancel => {}
         }
     }
 
     fn run(&mut self, command: Command, ctx: &egui::Context) {
         match command {
-            Command::New => self.set_document(Document::default(), None),
-            Command::Open | Command::SaveAs => self.ask(command, ctx),
+            // These replace the document or close it: ask first if it has
+            // changes that aren't saved.
+            Command::New | Command::Open | Command::Quit if self.history.is_dirty() => self.confirm = Some(command),
+            Command::New | Command::Open | Command::Quit => self.proceed(command, ctx),
+            Command::SaveAs => self.ask(command, ctx),
             Command::Save => match self.path.clone() {
                 Some(folder) => self.save_to(&folder),
                 None => self.ask(Command::SaveAs, ctx),
             },
-            Command::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             Command::Undo => drop(self.history.undo()),
             Command::Redo => drop(self.history.redo()),
             Command::Delete => {
@@ -266,9 +311,37 @@ impl App {
         }
     }
 
+    /// "Save your changes?", over everything else until it's answered.
+    fn confirm(&mut self, ctx: &egui::Context) {
+        if self.confirm.is_none() {
+            return;
+        }
+        let name = self.path.as_deref().map_or_else(|| "Untitled".into(), name_of);
+        let mut choice = None;
+        let modal = egui::Modal::new(egui::Id::new("confirm")).show(ctx, |ui| {
+            ui.label(format!("Save the changes to {name}?"));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                for (label, answer) in [("Save", Choice::Save), ("Don't Save", Choice::Discard), ("Cancel", Choice::Cancel)] {
+                    if ui.button(label).clicked() {
+                        choice = Some(answer);
+                    }
+                }
+            });
+        });
+        // Esc, or a click outside it, is Cancel.
+        if modal.should_close() {
+            choice = choice.or(Some(Choice::Cancel));
+        }
+        if let Some(choice) = choice {
+            self.decide(choice, ctx);
+        }
+    }
+
     fn keys(&mut self, ctx: &egui::Context) {
-        // While a text field has focus, keys edit the text.
-        if !ctx.egui_wants_keyboard_input() {
+        // While a text field has focus, keys edit the text; while a question
+        // is up, it is answered first.
+        if !ctx.egui_wants_keyboard_input() && self.confirm.is_none() {
             for command in Command::pressed(ctx) {
                 self.run(command, ctx);
             }
@@ -372,12 +445,26 @@ impl eframe::App for App {
             self.theme = theme;
         }
         self.answer();
+        // A save that an answer asked for has finished: carry on with what
+        // was being done.
+        if !self.history.is_dirty()
+            && self.dialog.is_none()
+            && let Some(command) = self.after_save.take()
+        {
+            self.proceed(command, ctx);
+        }
+        // The compositor closing the window is Quit by another road.
+        if ctx.input(|i| i.viewport().close_requested()) && !self.closing && self.history.is_dirty() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.confirm = Some(Command::Quit);
+        }
         self.keys(ctx);
         self.update_title(ctx);
     }
 
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.show(ui);
+        self.confirm(ui.ctx());
     }
 }
 
@@ -540,6 +627,48 @@ mod tests {
         other.open(&folder.join("pages"));
         assert!(other.status.as_ref().is_some_and(|(message, wrong)| *wrong && message.starts_with("Couldn't open: ")));
         assert_eq!(other.history.document(), app.history.document());
+        let _ = std::fs::remove_dir_all(folder.parent().unwrap());
+    }
+
+    #[test]
+    fn unsaved_changes_are_asked_about_before_they_are_thrown_away() {
+        let folder = std::env::temp_dir().join(format!("omavec-confirm-test-{}", std::process::id())).join("Kept.omavec");
+        let _ = std::fs::remove_dir_all(&folder);
+        let (ctx, mut app, canvas) = app();
+        // Nothing to lose: New just happens.
+        frame(&ctx, &mut app, key(Key::N, Modifiers::COMMAND));
+        assert_eq!(app.confirm, None);
+
+        let draw = |app: &mut App| {
+            frame(&ctx, app, key(Key::R, Modifiers::NONE));
+            drag(&ctx, app, canvas.min + vec2(50.0, 60.0), canvas.min + vec2(250.0, 160.0));
+        };
+        draw(&mut app);
+        frame(&ctx, &mut app, key(Key::N, Modifiers::COMMAND));
+        assert_eq!((app.confirm, boxes(&app).len()), (Some(Command::New), 1));
+        // While it's asking, keys don't reach the document.
+        frame(&ctx, &mut app, key(Key::Delete, Modifiers::NONE));
+        frame(&ctx, &mut app, key(Key::Z, Modifiers::COMMAND));
+        assert_eq!(boxes(&app).len(), 1);
+
+        app.decide(Choice::Cancel, &ctx);
+        assert_eq!((app.confirm, boxes(&app).len()), (None, 1));
+
+        frame(&ctx, &mut app, key(Key::N, Modifiers::COMMAND));
+        app.decide(Choice::Discard, &ctx);
+        assert_eq!((app.confirm, boxes(&app).len(), app.history.is_dirty()), (None, 0, false));
+
+        // Save, for a document that has somewhere to go: saved, then New.
+        draw(&mut app);
+        app.save_to(&folder);
+        frame(&ctx, &mut app, key(Key::ArrowRight, Modifiers::NONE));
+        frame(&ctx, &mut app, key(Key::N, Modifiers::COMMAND));
+        assert_eq!(app.confirm, Some(Command::New));
+        app.decide(Choice::Save, &ctx);
+        eframe::App::logic(&mut app, &ctx, &mut eframe::Frame::_new_kittest());
+        assert_eq!((boxes(&app).len(), &app.path, app.history.is_dirty()), (0, &None, false));
+        let saved = file::open(&folder).unwrap();
+        assert_eq!(saved.pages[0].children[0].transform.translation().x, 51.0);
         let _ = std::fs::remove_dir_all(folder.parent().unwrap());
     }
 

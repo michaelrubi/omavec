@@ -476,6 +476,32 @@ VectorCraft's `PathData`.
   radius and handle mirroring, and an R-tree instead of the hash grid that
   merges points.
 
+### Text: parley, fontique and skrifa fit together
+
+`cargo run --release -p omavec-render --example text` lays out one line at
+48 px in the system's sans-serif and in JetBrains Mono, draws it with
+`vello_cpu`'s glyph runs, turns the same glyphs into one `BezPath` with
+skrifa, and compares the two renderings pixel by pixel.
+
+- fontique resolves the same files `fc-match` does, for a generic family
+  and for a family by name. Opening the system collection (798 fonts
+  here) takes 15 ms, once.
+- parley lays the line out in 0.1 to 0.5 ms the first time a font is used
+  and 7 to 9 µs after that. Kerning applies. Neither font has `fi` or
+  `fl` ligatures, so those weren't exercised.
+- Outlines for the 29 glyphs take 5 µs and match the glyph-run rendering:
+  0.000% and 0.002% of pixels differ. Font units are y-up, so the pen
+  flips y as it goes.
+- `vello_cpu` 0.3, parley 0.12 and skrifa 0.44 share one skrifa,
+  read-fonts and peniko, so a font from parley's run goes straight into
+  `glyph_run` with no conversion.
+- For the text tool: `glyph_run` hints by default, which moves outlines
+  by up to a pixel; Omavec draws text with `.hint(false)` so the canvas
+  matches the exported outlines. A line can come back as several glyph
+  runs when a character falls back to another font; draw and outline
+  every run. fontique's `Query` borrows the collection, so read family
+  names after the query is dropped.
+
 ### `.fig`: `kiwi-schema` reads current files
 
 `omavec_fig::decode` reads four real files saved between 2022 and 2026

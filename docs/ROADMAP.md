@@ -6,9 +6,10 @@ finished items are ~~struck through~~ with "(done)", and anything deferred
 goes on a "Later:" line under the item.
 
 Status: Phase 0 under way. The workspace, the app shell and the canvas
-exist, and five of the six spikes are done (renderer, effects, vector
-network, pathops, .fig). The text spike and the two "Still open"
-decisions are left.
+exist, and all six spikes are done with their numbers in DESIGN.md,
+"Phase 0 findings". What's left of Phase 0 is Michael's: try the shell
+from the installed binary, and decide the first two "Still open" items in
+DECISIONS.md.
 
 ## Borrowing from VectorCraft
 
@@ -133,10 +134,14 @@ go into DESIGN.md.
   the inputs on a point grid, no panics on shared edges, identical shapes
   or tangencies, and one kurbo in the tree. No fallback is needed
   (`examples/pathops.rs`; table in DESIGN.md).
-- **Spike: text.** Lay out a line with parley using a system font found by
+- ~~**Spike: text.** Lay out a line with parley using a system font found by
   fontique, draw it with the canvas renderer, and turn it into outlines
   with skrifa. Read `vectorcraft-text`'s font catalogue and outline code
-  first.
+  first.~~ (done) `examples/text.rs` does all four with the system
+  sans-serif and JetBrains Mono. fontique agrees with `fc-match`, layout
+  takes microseconds once a font is loaded, and the skrifa outlines match
+  `vello_cpu`'s own glyph rendering to within 0.002% of pixels. The three
+  crates share one skrifa. Notes for the text tool are in DESIGN.md.
 - ~~**Spike: .fig.** Decode a real `.fig` ("Save local copy") with
   `kiwi-schema` and dump its node tree as JSON. Start the fixture
   folder.~~ (done) `omavec_fig::decode` reads four real files from 2022 to

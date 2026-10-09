@@ -171,7 +171,10 @@ fn test_font(
     let (_, path, match_msg) = resolve_font(font_cx, target.query, target.fc_pattern);
     println!("  font file: {path} ({match_msg})");
 
+    // The first layout with a font loads and indexes it; the rest reuse that.
+    let start = Instant::now();
     let layout = layout_line(font_cx, layout_cx, &target.family);
+    let first_layout = start.elapsed();
     let layout_times: Vec<_> = (0..50).map(|_| {
         let start = Instant::now();
         let _ = layout_line(font_cx, layout_cx, &target.family);
@@ -180,16 +183,20 @@ fn test_font(
     let median_layout = median_duration(layout_times);
 
     let line = layout.lines().next().expect("single line");
-    let glyph_run = line.items().find_map(|item| match item {
+    let mut runs = line.items().filter_map(|item| match item {
         PositionedLayoutItem::GlyphRun(gr) => Some(gr),
         _ => None,
-    }).expect("glyph run");
+    });
+    let glyph_run = runs.next().expect("glyph run");
+    // A second run would mean a character fell back to another font, which
+    // the rest of this spike would silently leave out.
+    assert_eq!(runs.count(), 0, "the line needed a fallback font");
 
     let (num_chars, num_glyphs) = (TEXT.chars().count(), glyph_run.glyphs().count());
     let width = layout.width();
     let ascent = glyph_run.run().font_metrics().ascent;
     let descent = glyph_run.run().font_metrics().descent;
-    println!("  layout: {num_chars} chars, {num_glyphs} glyphs, width {width:.2} px, ascent {ascent:.2} px, descent {descent:.2} px, {median_layout:?} (median of 50)");
+    println!("  layout: {num_chars} chars, {num_glyphs} glyphs, width {width:.2} px, ascent {ascent:.2} px, descent {descent:.2} px, first {first_layout:?}, then {median_layout:?} (median of 50)");
 
     let font_data = glyph_run.run().font();
     let font_ref = FontRef::from_index(font_data.data.data(), font_data.index).expect("valid font ref");
@@ -239,7 +246,10 @@ fn test_font(
 }
 
 fn main() {
+    // Finding the system's fonts is paid once, at startup or on first use.
+    let start = Instant::now();
     let mut font_cx = FontContext::new();
+    println!("system font collection: {:?}", start.elapsed());
     let mut layout_cx: LayoutContext<[u8; 4]> = LayoutContext::new();
     let mut resources = Resources::new();
 

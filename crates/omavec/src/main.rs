@@ -3,6 +3,7 @@
 
 mod app;
 mod canvas;
+mod cli;
 mod commands;
 mod properties;
 mod rulers;
@@ -16,6 +17,18 @@ fn main() -> eframe::Result {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn,omavec=info"))
         .init();
 
+    // `omavec export …` writes files and never opens a window.
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if arguments.first().is_some_and(|first| first == "export") {
+        match cli::export(&arguments[1..]) {
+            Ok(written) => written.iter().for_each(|path| println!("{}", path.display())),
+            Err(error) => {
+                eprintln!("omavec export: {error}");
+                std::process::exit(2);
+            }
+        }
+        return Ok(());
+    }
     // `omavec logo.omavec` opens that document.
     let open = std::env::args_os().nth(1).map(std::path::PathBuf::from);
 

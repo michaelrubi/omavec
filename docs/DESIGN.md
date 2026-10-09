@@ -294,7 +294,8 @@ omavec tokens file.omavec --format css|tailwind|omarchy
 ```
 
 The CLI uses the same engine, renderer and commands as the app, with no
-window and no GPU.
+window and no GPU. `omavec file.omavec` and `omavec export` exist; the
+other three are planned.
 
 ## Omarchy integration
 

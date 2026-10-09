@@ -36,9 +36,9 @@ cargo build --release
 make install               # installs to ~/.local/bin (the copy Michael actually runs)
 cargo run --release -- file.omavec        # a .omavec folder
 OMAVEC_BLOBS=10000 cargo run --release   # Phase 0's test scene, to try the canvas by hand
+omavec export file.omavec --frame Logo --format svg,png@2x --out dist/
 # Planned, not built yet:
 OMAVEC_SCRIPT="Rectangle 0 0 100 100,Ellipse 50 50 100 100,BooleanUnion" cargo run --release
-omavec export file.omavec --frame Logo --format svg,png@2x --out dist/
 ```
 
 ## Conventions

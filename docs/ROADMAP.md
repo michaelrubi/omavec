@@ -8,8 +8,8 @@ goes on a "Later:" line under the item.
 Status: Phase 0 is done bar Michael trying the shell by hand. Phase 1 is
 under way: you can draw frames, rectangles and ellipses, select, move and
 delete them, resize them by their handles or by number, undo and redo,
-change their fills, and save and reopen the document. Nothing can be
-exported yet.
+change their fills, save and reopen the document, and export its frames
+as SVG and PNG from a terminal.
 
 ## Borrowing from VectorCraft
 
@@ -243,6 +243,15 @@ reopen and export.
 - Export: per-node export settings (SVG, PNG @1x/@2x/@3x); `omavec export`
   CLI; `vello_cpu` for headless PNG. `vectorcraft-svg`'s writer is the
   reference for the SVG side.
+  Built so far: `omavec_engine::svg::write` turns a node into SVG
+  (`<rect>`, `<ellipse>` and `<g>`, translations folded into `x`/`y`,
+  numbers to three decimals), and a test rasterises it with resvg and
+  compares it with our own rendering, pixel by pixel. `omavec export
+  file.omavec --frame Logo --format svg,png@2x --out dist/` writes
+  top-level frames with no window: every frame if none is named, PNG at 1×
+  if no format is. Left: exporting from the app, export settings kept on
+  nodes, anything that isn't a top-level frame, clipping, and layer names
+  as ids.
 - `OMAVEC_SCRIPT` replay and the egui `Harness` for UI tests.
 - Command palette (Ctrl+K, Ctrl+/) listing every `Command`, and `:` to
   open it as a command line.

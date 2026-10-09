@@ -7,6 +7,8 @@ use std::sync::Arc;
 use omavec_geom::kurbo::{Affine, Size};
 use serde::{Deserialize, Serialize};
 
+use crate::paint::{Color, Paint, is_no, is_one, is_yes, one, yes};
+
 /// A node's identity, kept across saves so diffs stay small and instance
 /// overrides can name nodes inside components.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -43,6 +45,15 @@ impl NodeKind {
         matches!(self, NodeKind::Page | NodeKind::Frame { .. } | NodeKind::Group)
     }
 
+    /// What Figma fills a new node of this kind with.
+    fn fills(&self) -> Vec<Paint> {
+        match self {
+            NodeKind::Page | NodeKind::Group => Vec::new(),
+            NodeKind::Frame { .. } => vec![Paint::solid(Color::rgb(0xff, 0xff, 0xff))],
+            NodeKind::Rectangle | NodeKind::Ellipse => vec![Paint::solid(Color::rgb(0xd9, 0xd9, 0xd9))],
+        }
+    }
+
     /// What Figma calls a new node of this kind.
     fn label(&self) -> &'static str {
         match self {
@@ -73,29 +84,12 @@ pub struct Node {
     #[serde(default, skip_serializing_if = "is_identity")]
     pub transform: Affine,
     pub size: Size,
+    /// Bottom to top: the last fill is painted over the others.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fills: Vec<Paint>,
     /// Back to front: the last child is drawn on top.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Arc<Node>>,
-}
-
-fn yes() -> bool {
-    true
-}
-
-fn is_yes(value: &bool) -> bool {
-    *value
-}
-
-fn is_no(value: &bool) -> bool {
-    !*value
-}
-
-fn one() -> f64 {
-    1.0
-}
-
-fn is_one(value: &f64) -> bool {
-    *value == 1.0
 }
 
 fn is_identity(transform: &Affine) -> bool {
@@ -132,11 +126,12 @@ impl Document {
         self.next_id
     }
 
-    /// A new node of `kind` with an id of its own, not yet in the tree.
+    /// A new node of `kind` with an id of its own and Figma's fill for the
+    /// kind, not yet in the tree.
     pub fn create(&mut self, kind: NodeKind, size: Size) -> Node {
         let id = NodeId(self.next_id);
         self.next_id += 1;
-        Node { id, name: kind.label().into(), visible: true, locked: false, opacity: 1.0, transform: Affine::IDENTITY, size, kind, children: Vec::new() }
+        Node { id, name: kind.label().into(), visible: true, locked: false, opacity: 1.0, transform: Affine::IDENTITY, size, fills: kind.fills(), kind, children: Vec::new() }
     }
 
     pub fn add_page(&mut self, name: &str) -> NodeId {

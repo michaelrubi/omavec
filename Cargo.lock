@@ -2114,6 +2114,7 @@ name = "omavec-engine"
 version = "0.0.1"
 dependencies = [
  "omavec-geom",
+ "peniko",
  "proptest",
  "serde",
  "serde_json",

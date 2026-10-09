@@ -6,34 +6,12 @@
 
 pub mod spike;
 
+pub use omavec_engine::display::{DisplayList, Item};
 pub use peniko;
 
-use kurbo::{Affine, BezPath, Rect, Shape};
+use kurbo::{Affine, Rect};
 use peniko::{Color, ImageAlphaType};
 use vello_cpu::{Pixmap, RenderContext, Resources};
-
-/// One filled path, in document units.
-pub struct Item {
-    pub path: BezPath,
-    pub color: Color,
-    bounds: Rect,
-}
-
-impl Item {
-    pub fn new(path: BezPath, color: Color) -> Self {
-        Self { bounds: path.bounding_box(), path, color }
-    }
-
-    pub fn bounds(&self) -> Rect {
-        self.bounds
-    }
-}
-
-/// What to draw, back to front.
-#[derive(Default)]
-pub struct DisplayList {
-    pub items: Vec<Item>,
-}
 
 /// A drawn frame: premultiplied RGBA8, top row first.
 pub struct Frame {
@@ -66,7 +44,7 @@ impl Renderer {
         for item in &list.items {
             // vello_cpu keeps no scene between frames, so every path it's
             // given is processed again: skip the ones off screen.
-            if view.transform_rect_bbox(item.bounds).intersect(screen).is_zero_area() {
+            if view.transform_rect_bbox(item.bounds()).intersect(screen).is_zero_area() {
                 continue;
             }
             self.context.set_paint(item.color);
@@ -82,6 +60,7 @@ impl Renderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kurbo::Shape;
 
     fn pixel(frame: &Frame, x: usize, y: usize) -> [u8; 4] {
         let at = (y * usize::from(frame.width) + x) * 4;

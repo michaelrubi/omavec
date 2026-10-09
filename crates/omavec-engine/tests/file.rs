@@ -14,7 +14,8 @@ fn folder(name: &str) -> PathBuf {
 }
 
 /// Two pages: a frame holding a moved, half-transparent, locked rectangle
-/// and a hidden ellipse, and an empty page with an awkward name.
+/// and a hidden ellipse with a hidden fill, and an empty page with an
+/// awkward name.
 fn sample() -> Document {
     let mut document = Document::default();
     let page = document.pages[0].id;
@@ -29,6 +30,7 @@ fn sample() -> Document {
     let mut ellipse = document.create(NodeKind::Ellipse, Size::new(10.0, 10.0));
     ellipse.visible = false;
     ellipse.name = "Dot \"one\"".into();
+    (ellipse.fills[0].opacity, ellipse.fills[0].visible) = (0.25, false);
     document.insert(frame_id, 1, ellipse).unwrap();
     document.add_page("Écrans / Ébauches!");
     document
@@ -82,7 +84,7 @@ fn the_files_are_readable_and_leave_out_what_is_usual() {
     );
     assert_eq!(
         std::fs::read_to_string(folder.join("pages/01-page-1.json")).unwrap(),
-        r#"{
+        r##"{
   "id": 1,
   "type": "page",
   "name": "Page 1",
@@ -100,6 +102,12 @@ fn the_files_are_readable_and_leave_out_what_is_usual() {
         "width": 390.0,
         "height": 844.0
       },
+      "fills": [
+        {
+          "type": "solid",
+          "color": "#ffffff"
+        }
+      ],
       "children": [
         {
           "id": 3,
@@ -118,7 +126,13 @@ fn the_files_are_readable_and_leave_out_what_is_usual() {
           "size": {
             "width": 100.0,
             "height": 50.5
-          }
+          },
+          "fills": [
+            {
+              "type": "solid",
+              "color": "#d9d9d9"
+            }
+          ]
         },
         {
           "id": 4,
@@ -128,13 +142,21 @@ fn the_files_are_readable_and_leave_out_what_is_usual() {
           "size": {
             "width": 10.0,
             "height": 10.0
-          }
+          },
+          "fills": [
+            {
+              "type": "solid",
+              "color": "#d9d9d9",
+              "opacity": 0.25,
+              "visible": false
+            }
+          ]
         }
       ]
     }
   ]
 }
-"#
+"##
     );
 }
 

@@ -4,9 +4,12 @@
 // Shipped code returns errors; only tests may panic.
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+pub mod display;
 mod document;
 pub mod file;
 mod history;
+mod paint;
 
 pub use document::{Document, Error, Node, NodeId, NodeKind};
 pub use history::History;
+pub use paint::{Color, Paint, PaintKind};

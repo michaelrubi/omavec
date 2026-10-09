@@ -1,8 +1,12 @@
+// Shipped code returns errors; only tests may panic.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+
 mod app;
 mod canvas;
 mod commands;
 mod rulers;
 mod theme;
+mod tools;
 
 use eframe::egui_wgpu::WgpuSetup;
 use eframe::wgpu::PowerPreference;
@@ -10,6 +14,9 @@ use eframe::wgpu::PowerPreference;
 fn main() -> eframe::Result {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn,omavec=info"))
         .init();
+
+    // `omavec logo.omavec` opens that document.
+    let open = std::env::args_os().nth(1).map(std::path::PathBuf::from);
 
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -29,6 +36,6 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "omavec",
         options,
-        Box::new(move |cc| Ok(Box::new(app::App::new(cc)))),
+        Box::new(move |cc| Ok(Box::new(app::App::new(cc, open)))),
     )
 }

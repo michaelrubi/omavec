@@ -14,4 +14,5 @@ omavec-engine = { version = "0.0.1", path = "../omavec-engine" }
 omavec-fig = { version = "0.0.1", path = "../omavec-fig" }
 omavec-geom = { version = "0.0.1", path = "../omavec-geom" }
 omavec-render = { version = "0.0.1", path = "../omavec-render" }
+rfd = "0.17.2"
 toml = "1.1.6"

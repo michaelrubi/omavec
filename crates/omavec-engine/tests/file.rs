@@ -252,6 +252,10 @@ fn a_folder_that_is_not_a_document_says_why() {
         open_after("not-a-page", |folder| rewrite(&folder.join("pages/01-page-1.json"), "\"type\": \"page\"", "\"type\": \"group\"")),
         "…/pages/01-page-1.json: the top node is not a page"
     );
+    assert_eq!(
+        open_after("no-pages", |folder| std::fs::write(folder.join("document.json"), r#"{"format": 1, "next_id": 1, "pages": []}"#).unwrap()),
+        "…/document.json: the document has no pages"
+    );
     // What a careless merge in git leaves: one id on two nodes.
     assert_eq!(
         open_after("merged", |folder| rewrite(&folder.join("pages/01-page-1.json"), "\"id\": 4", "\"id\": 3")),

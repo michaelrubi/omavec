@@ -137,6 +137,9 @@ pub fn open(folder: &Path) -> Result<Document, FileError> {
         }
         pages.push(Arc::new(page));
     }
+    if pages.is_empty() {
+        return Err(FileError::Malformed { path, problem: "the document has no pages".into() });
+    }
     Ok(Document::from_parts(pages, manifest.next_id))
 }
 

@@ -2,7 +2,7 @@
 
 Omavec is a local-first vector design app for Omarchy: Figma's frames, auto layout and components plus Illustrator's logo tools (Shape Builder, Offset Path, Outline Stroke, width profiles, envelope distort). It is designed to match Figma muscle memory and feel native to Omarchy. Sibling apps: Omapix (raster, `michaelrubi/omapix`) and Omacull (culling, `michaelrubi/omacull`). Follow their conventions unless a doc here says otherwise. VectorCraft (`storytold/vectorcraft`, an MIT/Apache Illustrator clone in Rust) supplies our geometry crates and is the first reference for Illustrator-side features; see "Borrowing from VectorCraft" in `docs/ROADMAP.md` before writing geometry from scratch.
 
-**Status: Phase 0 (foundations and spikes).** Read `docs/DECISIONS.md`, `docs/DESIGN.md` and `docs/ROADMAP.md` before starting work. Work through `docs/ROADMAP.md` in order, and strike items through with "(done)" when finished.
+**Status: Phase 1 (document core and canvas).** Read `docs/DECISIONS.md`, `docs/DESIGN.md` and `docs/ROADMAP.md` before starting work. Work through `docs/ROADMAP.md` in order, and strike items through with "(done)" when finished.
 
 ## Principles
 
@@ -23,6 +23,8 @@ crates/
   omavec/          egui app on wgpu, canvas, tools, commands, panels, Omarchy theme, CLI
 ```
 
+- **Edits**: every change to a document goes through `omavec_engine::History` (`edit`, or `begin`/`commit` round a drag), so it can be undone. Tools (`crates/omavec/src/tools.rs`) take pointer events in page coordinates and never see egui.
+- **No panics**: every crate denies `unwrap`, `expect` and `panic!` outside tests; return an error or log and carry on.
 - **Commands**: every action goes through `Command` in `crates/omavec/src/commands.rs`, so menus, shortcuts, the command palette, `OMAVEC_SCRIPT` and the CLI never diverge.
 - **Versions**: kurbo 0.13 is shared by `vello_cpu` 0.3, peniko and the VectorCraft crates; keep one kurbo in the tree when upgrading any of them (`cargo tree -d`). The canvas doesn't use the GPU, so egui/eframe 0.36 and wgpu 30 upgrade on their own.
 
@@ -32,7 +34,7 @@ crates/
 cargo test                 # engine, geometry and headless UI tests
 cargo build --release
 make install               # installs to ~/.local/bin (the copy Michael actually runs)
-cargo run --release -- file.omavec
+cargo run --release -- file.omavec        # a .omavec folder
 OMAVEC_BLOBS=10000 cargo run --release   # Phase 0's test scene, to try the canvas by hand
 # Planned, not built yet:
 OMAVEC_SCRIPT="Rectangle 0 0 100 100,Ellipse 50 50 100 100,BooleanUnion" cargo run --release

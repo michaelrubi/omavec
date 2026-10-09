@@ -26,16 +26,16 @@ impl Default for Theme {
     fn default() -> Self {
         Self {
             dark: true,
-            accent: hex("#89b4fa").unwrap(),
-            selection: hex("#45475a").unwrap(),
-            muted: hex("#585b70").unwrap(),
-            background: hex("#1e1e2e").unwrap(),
-            dark_background: hex("#161622").unwrap(),
-            darker_background: hex("#101019").unwrap(),
-            lighter_background: hex("#313244").unwrap(),
-            foreground: hex("#cdd6f4").unwrap(),
-            dark_foreground: hex("#6c7086").unwrap(),
-            red: hex("#f38ba8").unwrap(),
+            accent: Color32::from_rgb(0x89, 0xb4, 0xfa),
+            selection: Color32::from_rgb(0x45, 0x47, 0x5a),
+            muted: Color32::from_rgb(0x58, 0x5b, 0x70),
+            background: Color32::from_rgb(0x1e, 0x1e, 0x2e),
+            dark_background: Color32::from_rgb(0x16, 0x16, 0x22),
+            darker_background: Color32::from_rgb(0x10, 0x10, 0x19),
+            lighter_background: Color32::from_rgb(0x31, 0x32, 0x44),
+            foreground: Color32::from_rgb(0xcd, 0xd6, 0xf4),
+            dark_foreground: Color32::from_rgb(0x6c, 0x70, 0x86),
+            red: Color32::from_rgb(0xf3, 0x8b, 0xa8),
         }
     }
 }
@@ -156,7 +156,7 @@ impl Theme {
 /// wakes the UI when something actually changed.
 pub fn watch(ctx: egui::Context) -> Receiver<Theme> {
     let (tx, rx) = channel();
-    std::thread::Builder::new()
+    let spawned = std::thread::Builder::new()
         .name("theme-watch".into())
         .spawn(move || {
             let stamp = || -> Option<(SystemTime, SystemTime)> {
@@ -183,8 +183,11 @@ pub fn watch(ctx: egui::Context) -> Receiver<Theme> {
                     ctx.request_repaint();
                 }
             }
-        })
-        .expect("spawn theme watcher");
+        });
+    // Without the thread the theme just stays as it was at startup.
+    if let Err(error) = spawned {
+        log::warn!("the theme won't follow Omarchy: {error}");
+    }
     rx
 }
 

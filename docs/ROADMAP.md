@@ -243,8 +243,10 @@ reopen and export.
   frames that clip what they draw (hit testing already respects it); a
   stroke counted in hit testing and in a node's bounds.
 - Panels: layers (tree, rename, reorder by drag, hide, lock, multi-select),
-  properties (Figma's right panel layout). Built so far: the layers list,
-  front-most first, where a click selects.
+  properties (Figma's right panel layout). Built so far: the layers panel
+  (select, Shift-select, rename by double-click, hide and lock per row and
+  by Ctrl+Shift+H / Ctrl+Shift+L); reordering by drag and the rest of the
+  properties panel are left.
 - Smart guides and snapping: edges, centres, equal spacing, pixel grid.
 - Group (Ctrl+G), frame selection (Ctrl+Alt+G), duplicate (Ctrl+D,
   Alt+drag), copy/paste within Omavec and as SVG to the Wayland clipboard.

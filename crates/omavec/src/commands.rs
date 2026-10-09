@@ -31,10 +31,12 @@ pub enum Command {
     ToggleRulers,
     TogglePixelGrid,
     ToggleUi,
+    ToggleVisible,
+    ToggleLocked,
 }
 
 impl Command {
-    pub const ALL: [Command; 26] = [
+    pub const ALL: [Command; 28] = [
         Command::New,
         Command::Open,
         Command::Save,
@@ -61,6 +63,8 @@ impl Command {
         Command::ToggleRulers,
         Command::TogglePixelGrid,
         Command::ToggleUi,
+        Command::ToggleVisible,
+        Command::ToggleLocked,
     ];
 
     pub fn label(self) -> &'static str {
@@ -91,6 +95,8 @@ impl Command {
             Command::ToggleRulers => "Rulers",
             Command::TogglePixelGrid => "Pixel Grid",
             Command::ToggleUi => "Show/Hide UI",
+            Command::ToggleVisible => "Show/Hide Selection",
+            Command::ToggleLocked => "Lock/Unlock Selection",
         }
     }
 
@@ -125,6 +131,8 @@ impl Command {
             Command::ToggleRulers => (Modifiers::SHIFT, Key::R),
             Command::TogglePixelGrid => (Modifiers::SHIFT, Key::Quote),
             Command::ToggleUi => (Modifiers::COMMAND, Key::Backslash),
+            Command::ToggleVisible => (both, Key::H),
+            Command::ToggleLocked => (both, Key::L),
         };
         Some(KeyboardShortcut::new(modifiers, key))
     }

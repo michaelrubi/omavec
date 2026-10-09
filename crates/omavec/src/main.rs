@@ -5,6 +5,7 @@ mod app;
 mod canvas;
 mod cli;
 mod commands;
+mod layers_panel;
 mod properties;
 mod rulers;
 mod theme;

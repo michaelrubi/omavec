@@ -3,11 +3,12 @@ use std::sync::mpsc::{Receiver, channel};
 
 use egui::{Button, RichText, Ui};
 use omavec_engine::display::DisplayList;
-use omavec_engine::{Document, History, Node, NodeId, file};
+use omavec_engine::{Document, History, NodeId, file};
 use omavec_geom::kurbo::{Point, Rect, Vec2};
 
 use crate::canvas::{Canvas, Pointer};
 use crate::commands::Command;
+use crate::layers_panel::{self, LayersPanel};
 use crate::properties::Properties;
 use crate::theme::{self, Theme};
 use crate::tools::{Keys, Tool, Tools};
@@ -30,6 +31,7 @@ pub struct App {
     canvas: Canvas,
     history: History,
     tools: Tools,
+    layers: LayersPanel,
     properties: Properties,
     /// The page on the canvas.
     page: NodeId,
@@ -90,7 +92,7 @@ impl App {
         canvas.readout = blobs.is_some();
         let document = Document::default();
         let page = document.pages[0].id;
-        Self { theme, theme_rx: None, show_ui: true, canvas, history: History::new(document), tools: Tools::default(), properties: Properties::default(), page, drawn: None, spike: blobs.is_some(), path: None, dialog: None, status: None, title: String::new(), confirm: None, after_save: None, closing: false }
+        Self { theme, theme_rx: None, show_ui: true, canvas, history: History::new(document), tools: Tools::default(), layers: LayersPanel::default(), properties: Properties::default(), page, drawn: None, spike: blobs.is_some(), path: None, dialog: None, status: None, title: String::new(), confirm: None, after_save: None, closing: false }
     }
 
     fn say(&mut self, message: impl Into<String>, wrong: bool) {
@@ -221,6 +223,14 @@ impl App {
                 let deleted = self.tools.delete(&mut self.history);
                 self.check(deleted);
             }
+            Command::ToggleVisible => {
+                let toggled = layers_panel::toggle_visible(&mut self.history, &self.tools.selection);
+                self.check(toggled);
+            }
+            Command::ToggleLocked => {
+                let toggled = layers_panel::toggle_locked(&mut self.history, &self.tools.selection);
+                self.check(toggled);
+            }
             Command::Cancel => self.tools.cancel(&mut self.history),
             Command::NudgeLeft | Command::NudgeRight | Command::NudgeUp | Command::NudgeDown => {
                 // One unit, or ten with Shift, as in Figma.
@@ -274,7 +284,7 @@ impl App {
     fn menu_bar(&mut self, ui: &mut Ui) {
         const MENUS: [(&str, &[Command]); 3] = [
             ("File", &[Command::New, Command::Open, Command::Save, Command::SaveAs, Command::Quit]),
-            ("Edit", &[Command::Undo, Command::Redo, Command::Delete]),
+            ("Edit", &[Command::Undo, Command::Redo, Command::Delete, Command::ToggleVisible, Command::ToggleLocked]),
             ("View", &[Command::ZoomIn, Command::ZoomOut, Command::ZoomTo100, Command::ZoomToFit, Command::ZoomToSelection, Command::ToggleRulers, Command::TogglePixelGrid, Command::ToggleUi]),
         ];
         egui::MenuBar::new().ui(ui, |ui| {
@@ -301,32 +311,6 @@ impl App {
                 ui.add_space(8.0);
             }
         });
-    }
-
-    /// The page's nodes, front-most first as in Figma; a click selects one.
-    fn layers(&mut self, ui: &mut Ui) {
-        fn rows(ui: &mut Ui, nodes: &[std::sync::Arc<Node>], depth: usize, selection: &[NodeId], accent: egui::Color32, picked: &mut Option<NodeId>) {
-            for node in nodes.iter().rev() {
-                ui.horizontal(|ui| {
-                    ui.add_space(depth as f32 * 12.0);
-                    let mut name = RichText::new(&node.name);
-                    if selection.contains(&node.id) {
-                        name = name.color(accent).strong();
-                    }
-                    if ui.add(Button::new(name).frame(false)).clicked() {
-                        *picked = Some(node.id);
-                    }
-                });
-                rows(ui, &node.children, depth + 1, selection, accent, picked);
-            }
-        }
-        let mut picked = None;
-        if let Some(page) = self.history.document().node(self.page) {
-            rows(ui, &page.children, 0, &self.tools.selection, self.theme.accent, &mut picked);
-        }
-        if let Some(picked) = picked {
-            self.tools.selection = vec![picked];
-        }
     }
 
     /// "Save your changes?", over everything else until it's answered.
@@ -405,7 +389,8 @@ impl App {
                 .show(ui, |ui| {
                     ui.strong("Layers");
                     ui.separator();
-                    self.layers(ui);
+                    let shown = self.layers.show(ui, &mut self.history, self.page, &mut self.tools.selection, &self.theme);
+                    self.check(shown);
                     ui.take_available_space();
                 });
             egui::Panel::right("properties")
@@ -776,5 +761,73 @@ mod tests {
 
         frame(&ctx, &mut app, key(Key::Quote, Modifiers::SHIFT));
         assert!(app.canvas.pixel_grid);
+    }
+
+    #[test]
+    fn ctrl_shift_h_and_ctrl_shift_l_toggle_visible_and_locked() {
+        let (ctx, mut app, canvas) = app();
+        frame(&ctx, &mut app, key(Key::R, Modifiers::NONE));
+        drag(&ctx, &mut app, canvas.min + vec2(50.0, 60.0), canvas.min + vec2(250.0, 160.0));
+        assert_eq!(app.tools.selection.len(), 1);
+        let id = app.tools.selection[0];
+        assert!(app.history.document().node(id).unwrap().visible);
+        assert!(!app.history.document().node(id).unwrap().locked);
+
+        frame(&ctx, &mut app, key(Key::H, Modifiers::COMMAND | Modifiers::SHIFT));
+        assert!(!app.history.document().node(id).unwrap().visible);
+
+        frame(&ctx, &mut app, key(Key::H, Modifiers::COMMAND | Modifiers::SHIFT));
+        assert!(app.history.document().node(id).unwrap().visible);
+
+        frame(&ctx, &mut app, key(Key::L, Modifiers::COMMAND | Modifiers::SHIFT));
+        assert!(app.history.document().node(id).unwrap().locked);
+
+        frame(&ctx, &mut app, key(Key::L, Modifiers::COMMAND | Modifiers::SHIFT));
+        assert!(!app.history.document().node(id).unwrap().locked);
+    }
+
+    #[test]
+    fn while_renaming_typed_letters_and_backspace_reach_the_text_and_nothing_else() {
+        let (ctx, mut app, canvas) = app();
+        frame(&ctx, &mut app, key(Key::R, Modifiers::NONE));
+        drag(&ctx, &mut app, canvas.min + vec2(50.0, 60.0), canvas.min + vec2(250.0, 160.0));
+        assert_eq!(app.tools.tool, Tool::Move);
+        assert_eq!(boxes(&app).len(), 1);
+        let id = app.tools.selection[0];
+
+        let rect = ctx.read_response(crate::layers_panel::row_id(id)).unwrap().rect;
+        let pos = pos2(rect.left() + 20.0, rect.center().y);
+        let button = |pressed| Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
+        frame(&ctx, &mut app, vec![Event::PointerMoved(pos), button(true)]);
+        frame(&ctx, &mut app, vec![button(false)]);
+        frame(&ctx, &mut app, vec![button(true)]);
+        frame(&ctx, &mut app, vec![button(false)]);
+        assert!(app.layers.renaming.is_some());
+
+        // First frame: text edit requests focus and selects all text.
+        frame(&ctx, &mut app, vec![]);
+
+        // Type 'r': should not pick Rectangle tool.
+        frame(&ctx, &mut app, [vec![Event::Text("r".into())], key(Key::R, Modifiers::NONE)].concat());
+        assert_eq!(app.tools.tool, Tool::Move);
+
+        // Type 'v': should not pick Move tool.
+        frame(&ctx, &mut app, [vec![Event::Text("v".into())], key(Key::V, Modifiers::NONE)].concat());
+        assert_eq!(app.tools.tool, Tool::Move);
+
+        // Type 'o': should not pick Ellipse tool.
+        frame(&ctx, &mut app, [vec![Event::Text("o".into())], key(Key::O, Modifiers::NONE)].concat());
+        assert_eq!(app.tools.tool, Tool::Move);
+
+        // Backspace: should not delete the node.
+        frame(&ctx, &mut app, key(Key::Backspace, Modifiers::NONE));
+        assert_eq!(boxes(&app).len(), 1);
+
+        // Press Enter to submit rename.
+        frame(&ctx, &mut app, key(Key::Enter, Modifiers::NONE));
+        assert_eq!(app.layers.renaming, None);
+        assert_eq!(app.tools.tool, Tool::Move);
+        assert_eq!(boxes(&app).len(), 1);
+        assert_eq!(app.history.document().node(id).unwrap().name, "rv");
     }
 }

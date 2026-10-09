@@ -7,15 +7,21 @@ use egui::{Key, KeyboardShortcut, Modifiers};
 pub enum Command {
     Quit,
     ToggleUi,
+    ZoomIn,
+    ZoomOut,
+    ZoomTo100,
 }
 
 impl Command {
-    pub const ALL: [Command; 2] = [Command::Quit, Command::ToggleUi];
+    pub const ALL: [Command; 5] = [Command::Quit, Command::ToggleUi, Command::ZoomIn, Command::ZoomOut, Command::ZoomTo100];
 
     pub fn label(self) -> &'static str {
         match self {
             Command::Quit => "Quit",
             Command::ToggleUi => "Show/Hide UI",
+            Command::ZoomIn => "Zoom In",
+            Command::ZoomOut => "Zoom Out",
+            Command::ZoomTo100 => "Zoom to 100%",
         }
     }
 
@@ -24,6 +30,9 @@ impl Command {
         let (modifiers, key) = match self {
             Command::Quit => (Modifiers::COMMAND, Key::Q),
             Command::ToggleUi => (Modifiers::COMMAND, Key::Backslash),
+            Command::ZoomIn => (Modifiers::COMMAND, Key::Equals),
+            Command::ZoomOut => (Modifiers::COMMAND, Key::Minus),
+            Command::ZoomTo100 => (Modifiers::SHIFT, Key::Num0),
         };
         Some(KeyboardShortcut::new(modifiers, key))
     }

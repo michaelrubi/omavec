@@ -12,76 +12,16 @@
 use std::future::Future;
 use std::time::{Duration, Instant};
 
-use kurbo::{Affine, BezPath, Point, Rect, Shape, Vec2};
+use kurbo::{Affine, Rect};
+use omavec_render::Item;
+use omavec_render::spike::{DOCUMENT, blobs};
 use peniko::{Color, Fill};
 use vello::wgpu;
 
 const WIDTH: u16 = 2560;
 const HEIGHT: u16 = 1440;
-/// The side of the square the blobs are scattered over, in canvas units.
-const DOCUMENT: f64 = 8000.0;
 const ZOOMS: [f64; 3] = [1.0, 64.0, 0.05];
 const FRAMES: usize = 30;
-
-struct Blob {
-    path: BezPath,
-    bounds: Rect,
-    color: Color,
-}
-
-/// xorshift64*: the same blobs on every run, with no `rand`.
-struct Rng(u64);
-
-impl Rng {
-    fn unit(&mut self) -> f64 {
-        self.0 ^= self.0 >> 12;
-        self.0 ^= self.0 << 25;
-        self.0 ^= self.0 >> 27;
-        (self.0.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 11) as f64 / (1u64 << 53) as f64
-    }
-
-    fn range(&mut self, low: f64, high: f64) -> f64 {
-        low + (high - low) * self.unit()
-    }
-}
-
-/// A closed loop of `corners` smooth cubic segments around `centre`.
-fn blob(rng: &mut Rng, centre: Point) -> Blob {
-    let corners = 4 + (rng.unit() * 3.0) as usize;
-    let radius = rng.range(20.0, 120.0);
-    let step = std::f64::consts::TAU / corners as f64;
-    let points: Vec<(Point, Vec2)> = (0..corners)
-        .map(|i| {
-            let angle = step * i as f64;
-            let r = radius * rng.range(0.6, 1.0);
-            let out = Vec2::from_angle(angle);
-            // The tangent that would make a circle, so the loop stays smooth.
-            let tangent = Vec2::new(-out.y, out.x) * (r * 4.0 / 3.0 * (step / 4.0).tan());
-            (centre + out * r, tangent)
-        })
-        .collect();
-    let mut path = BezPath::new();
-    path.move_to(points[0].0);
-    for i in 0..corners {
-        let (from, from_tangent) = points[i];
-        let (to, to_tangent) = points[(i + 1) % corners];
-        path.curve_to(from + from_tangent, to - to_tangent, to);
-    }
-    path.close_path();
-    let channel = |rng: &mut Rng| rng.range(40.0, 255.0) as u8;
-    let color = Color::from_rgba8(channel(rng), channel(rng), channel(rng), 200);
-    Blob { bounds: path.bounding_box(), path, color }
-}
-
-fn blobs(count: usize) -> Vec<Blob> {
-    let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
-    (0..count)
-        .map(|_| {
-            let centre = Point::new(rng.range(0.0, DOCUMENT), rng.range(0.0, DOCUMENT));
-            blob(&mut rng, centre)
-        })
-        .collect()
-}
 
 /// The middle of the document in the middle of the view.
 fn view(zoom: f64) -> Affine {
@@ -90,8 +30,8 @@ fn view(zoom: f64) -> Affine {
         * Affine::translate((-DOCUMENT / 2.0, -DOCUMENT / 2.0))
 }
 
-fn visible(blob: &Blob, view: Affine, screen: Rect) -> bool {
-    !view.transform_rect_bbox(blob.bounds).intersect(screen).is_zero_area()
+fn visible(blob: &Item, view: Affine, screen: Rect) -> bool {
+    !view.transform_rect_bbox(blob.bounds()).intersect(screen).is_zero_area()
 }
 
 fn median(mut times: Vec<Duration>) -> f64 {
@@ -123,7 +63,7 @@ fn dump(name: &str, rgba: Vec<u8>, alpha: vello_cpu::peniko::ImageAlphaType) {
 
 /// `vello_cpu` has no retained scene: every frame feeds it every path again.
 /// `cull` skips the paths outside the view first, as a canvas would.
-fn cpu(blobs: &[Blob], threads: u16, cull: bool) {
+fn cpu(blobs: &[Item], threads: u16, cull: bool) {
     let settings = vello_cpu::RenderSettings { num_threads: threads, ..Default::default() };
     let mut context = vello_cpu::RenderContext::new_with(WIDTH, HEIGHT, settings);
     let mut resources = vello_cpu::Resources::new();
@@ -156,7 +96,7 @@ fn cpu(blobs: &[Blob], threads: u16, cull: bool) {
 
 /// vello keeps the encoded scene: a frame appends it under the view
 /// transform and the GPU does the rest, off-screen paths included.
-async fn gpu(blobs: &[Blob], power: wgpu::PowerPreference) {
+async fn gpu(blobs: &[Item], power: wgpu::PowerPreference) {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let options = wgpu::RequestAdapterOptions { power_preference: power, ..Default::default() };
     let Ok(adapter) = instance.request_adapter(&options).await else {
@@ -330,7 +270,7 @@ fn read_back(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture
 
 fn main() {
     let count = std::env::args().nth(1).and_then(|n| n.parse().ok()).unwrap_or(10_000);
-    let blobs = blobs(count);
+    let blobs = blobs(count).items;
     println!("{count} cubic blobs over {DOCUMENT} units, drawn at {WIDTH}x{HEIGHT}\n");
     let threads = vello_cpu::RenderSettings::default().num_threads;
     cpu(&blobs, threads, true);

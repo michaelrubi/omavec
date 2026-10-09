@@ -3,7 +3,7 @@ name = "omavec-render"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Omavec's renderer: display list to vello"
+description = "Omavec's renderer: display list to pixels with vello_cpu"
 
 [dependencies]
 omavec-engine = { version = "0.0.1", path = "../omavec-engine" }

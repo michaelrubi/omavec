@@ -335,7 +335,7 @@ Figma's defaults, plus Illustrator's letters for the tools Figma lacks.
 | Ctrl+\ | Show/hide UI | Ctrl+Q | Quit |
 | Ctrl+Z / Ctrl+Shift+Z | Undo / redo | Delete, Backspace | Delete |
 | Ctrl+N / Ctrl+O | New / open | Ctrl+S / Ctrl+Shift+S | Save / save as |
-| Esc | Give up the drag, then the tool | | |
+| Esc | Give up the drag, then the tool | Arrows / Shift+arrows | Nudge by 1 / 10 |
 | Shift+R | Rulers | Shift+' | Pixel grid |
 
 On the canvas: the wheel pans, Ctrl+wheel or a pinch zooms about the

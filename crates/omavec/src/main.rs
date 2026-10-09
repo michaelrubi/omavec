@@ -4,6 +4,7 @@
 mod app;
 mod canvas;
 mod commands;
+mod properties;
 mod rulers;
 mod theme;
 mod tools;

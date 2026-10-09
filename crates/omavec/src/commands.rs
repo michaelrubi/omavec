@@ -14,6 +14,10 @@ pub enum Command {
     Redo,
     Delete,
     Cancel,
+    NudgeLeft,
+    NudgeRight,
+    NudgeUp,
+    NudgeDown,
     MoveTool,
     FrameTool,
     RectangleTool,
@@ -27,7 +31,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Command; 19] = [
+    pub const ALL: [Command; 23] = [
         Command::New,
         Command::Open,
         Command::Save,
@@ -37,6 +41,10 @@ impl Command {
         Command::Redo,
         Command::Delete,
         Command::Cancel,
+        Command::NudgeLeft,
+        Command::NudgeRight,
+        Command::NudgeUp,
+        Command::NudgeDown,
         Command::MoveTool,
         Command::FrameTool,
         Command::RectangleTool,
@@ -60,6 +68,10 @@ impl Command {
             Command::Redo => "Redo",
             Command::Delete => "Delete",
             Command::Cancel => "Cancel",
+            Command::NudgeLeft => "Nudge Left",
+            Command::NudgeRight => "Nudge Right",
+            Command::NudgeUp => "Nudge Up",
+            Command::NudgeDown => "Nudge Down",
             Command::MoveTool => "Move",
             Command::FrameTool => "Frame",
             Command::RectangleTool => "Rectangle",
@@ -86,6 +98,11 @@ impl Command {
             Command::Redo => (both, Key::Z),
             Command::Delete => (Modifiers::NONE, Key::Delete),
             Command::Cancel => (Modifiers::NONE, Key::Escape),
+            // With Shift held these still match, and nudge by 10.
+            Command::NudgeLeft => (Modifiers::NONE, Key::ArrowLeft),
+            Command::NudgeRight => (Modifiers::NONE, Key::ArrowRight),
+            Command::NudgeUp => (Modifiers::NONE, Key::ArrowUp),
+            Command::NudgeDown => (Modifiers::NONE, Key::ArrowDown),
             Command::MoveTool => (Modifiers::NONE, Key::V),
             Command::FrameTool => (Modifiers::NONE, Key::F),
             Command::RectangleTool => (Modifiers::NONE, Key::R),

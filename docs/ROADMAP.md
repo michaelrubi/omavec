@@ -7,8 +7,8 @@ goes on a "Later:" line under the item.
 
 Status: Phase 0 is done bar Michael trying the shell by hand. Phase 1 is
 under way: you can draw frames, rectangles and ellipses, select, move and
-delete them, undo and redo, and save and reopen the document. Nothing can
-be styled, resized or exported yet.
+delete them, resize them by their handles or by number, undo and redo,
+and save and reopen the document. Nothing can be styled or exported yet.
 
 ## Borrowing from VectorCraft
 
@@ -209,6 +209,13 @@ reopen and export.
   with arrows (Shift: 10); numeric X/Y/W/H/rotation in the properties panel.
   Built so far: dragging the selection moves it, as one undo step, also
   inside rotated or scaled frames; Esc puts it back; Delete removes it.
+  One selected node resizes by its corners and anywhere along its edges,
+  along its own sides if it is rotated, with Shift keeping proportions and
+  Alt resizing about the middle. Arrows nudge by 1, or 10 with Shift. The
+  Design panel has X, Y, W, H and rotation to drag or type; rotation is
+  about the middle, anticlockwise as in Figma. Left: rotate handles,
+  resizing several nodes at once, resize cursors, Shift to keep a move on
+  one axis, and children that follow their frame (constraints, Phase 5).
 - Tools: Frame (artboards = top-level frames, with Figma's device presets),
   Rectangle (per-corner radii), Ellipse (arc/ratio), Polygon, Star, Line,
   Arrow. Built so far: Frame (F), Rectangle (R) and Ellipse (O) by

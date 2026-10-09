@@ -4,7 +4,7 @@ use std::sync::mpsc::{Receiver, channel};
 use egui::{Button, RichText, Ui};
 use omavec_engine::display::DisplayList;
 use omavec_engine::{Document, History, Node, NodeId, file};
-use omavec_geom::kurbo::{Point, Rect};
+use omavec_geom::kurbo::{Point, Rect, Vec2};
 
 use crate::canvas::{Canvas, Pointer};
 use crate::commands::Command;
@@ -169,6 +169,18 @@ impl App {
                 self.check(deleted);
             }
             Command::Cancel => self.tools.cancel(&mut self.history),
+            Command::NudgeLeft | Command::NudgeRight | Command::NudgeUp | Command::NudgeDown => {
+                // One unit, or ten with Shift, as in Figma.
+                let step = if ctx.input(|i| i.modifiers.shift) { 10.0 } else { 1.0 };
+                let by = match command {
+                    Command::NudgeLeft => Vec2::new(-step, 0.0),
+                    Command::NudgeRight => Vec2::new(step, 0.0),
+                    Command::NudgeUp => Vec2::new(0.0, -step),
+                    _ => Vec2::new(0.0, step),
+                };
+                let nudged = self.tools.nudge(&mut self.history, by);
+                self.check(nudged);
+            }
             Command::MoveTool | Command::FrameTool | Command::RectangleTool | Command::EllipseTool => {
                 if let Some((tool, _)) = TOOLS.iter().find(|(_, picks)| *picks == command) {
                     self.tools.tool = *tool;
@@ -310,12 +322,16 @@ impl App {
                 .show(ui, |ui| {
                     ui.strong("Design");
                     ui.separator();
+                    let shown = crate::properties::show(ui, &mut self.history, &self.tools.selection);
+                    self.check(shown);
                     ui.take_available_space();
                 });
         }
         let selected = self.selected();
         let (rect, pointer) = egui::CentralPanel::no_frame().show(ui, |ui| self.canvas.show(ui, &self.theme, &selected)).inner;
         let keys = ui.input(|i| Keys { shift: i.modifiers.shift, alt: i.modifiers.alt });
+        // A handle is taken from six points away, whatever the zoom.
+        self.tools.grab = 6.0 / self.canvas.view.zoom;
         for event in pointer {
             let done = match event {
                 Pointer::Press(at) => {
@@ -464,6 +480,23 @@ mod tests {
         frame(&ctx, &mut app, key(Key::Z, Modifiers::COMMAND));
         frame(&ctx, &mut app, key(Key::Backspace, Modifiers::NONE));
         assert_eq!(boxes(&app).len(), 1, "nothing was selected after the undo");
+    }
+
+    #[test]
+    fn a_corner_resizes_at_any_zoom_and_arrows_nudge() {
+        let (ctx, mut app, canvas) = app();
+        app.canvas.view = crate::canvas::View { origin: Vec2::new(0.0, 0.0), zoom: 4.0 };
+        frame(&ctx, &mut app, key(Key::R, Modifiers::NONE));
+        // On screen 40..200 by 40..120: in the document 10..50 by 10..30.
+        drag(&ctx, &mut app, canvas.min + vec2(40.0, 40.0), canvas.min + vec2(200.0, 120.0));
+        // Take the bottom-right corner from four points off it.
+        drag(&ctx, &mut app, canvas.min + vec2(204.0, 123.0), canvas.min + vec2(284.0, 203.0));
+        assert_eq!(boxes(&app), [(NodeKind::Rectangle, Rect::new(10.0, 10.0, 70.0, 50.0))]);
+        assert_eq!(app.history.undo_name(), Some("Resize"));
+
+        frame(&ctx, &mut app, key(Key::ArrowRight, Modifiers::NONE));
+        frame(&ctx, &mut app, key(Key::ArrowUp, Modifiers::SHIFT));
+        assert_eq!(boxes(&app), [(NodeKind::Rectangle, Rect::new(11.0, 0.0, 71.0, 40.0))]);
     }
 
     #[test]

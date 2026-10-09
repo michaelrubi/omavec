@@ -241,9 +241,16 @@ impl Canvas {
             let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
             painter.image(texture.id(), place, uv, Color32::WHITE);
         }
+        let outline = egui::Stroke::new(1.5, theme.accent);
         for corners in selected {
             let corners = corners.map(|corner| to_screen(self.view.origin + corner.to_vec2() * self.view.zoom));
-            painter.add(egui::Shape::closed_line(corners.to_vec(), egui::Stroke::new(1.5, theme.accent)));
+            painter.add(egui::Shape::closed_line(corners.to_vec(), outline));
+            // One node alone shows the corners it can be resized by.
+            if selected.len() == 1 {
+                for corner in corners {
+                    painter.rect(Rect::from_center_size(corner, egui::vec2(7.0, 7.0)), 0.0, Color32::WHITE, outline, egui::StrokeKind::Inside);
+                }
+            }
         }
         rulers::paint(&painter, rect, self.view, theme, self.rulers, self.pixel_grid);
         if let Some((_, _, took)) = &self.shown

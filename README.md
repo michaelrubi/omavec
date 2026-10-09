@@ -9,7 +9,8 @@ without switching apps.
 > Omavec is an independent project. It is not made by or affiliated with
 > Omarchy.
 
-**Status:** scoping. There's no code yet, only the plan:
+**Status:** early. There's a window in the Omarchy theme with a canvas
+you can pan and zoom, and nothing to draw on it yet. The plan:
 
 - [docs/DECISIONS.md](docs/DECISIONS.md): what Omavec is and isn't, and why
 - [docs/DESIGN.md](docs/DESIGN.md): the architecture
@@ -28,11 +29,13 @@ without switching apps.
 ## Built on
 
 Rust, [egui](https://github.com/emilk/egui) for the UI (like Omapix and
-Omacull), and Linebender's [vello](https://github.com/linebender/vello)
-(GPU rendering), [kurbo](https://github.com/linebender/kurbo) (curves),
+Omacull), and Linebender's [vello_cpu](https://github.com/linebender/vello)
+(rendering), [kurbo](https://github.com/linebender/kurbo) (curves),
 [parley](https://github.com/linebender/parley) (text) and
 [linesweeper](https://github.com/jneem/linesweeper) (booleans), with
-[taffy](https://github.com/DioxusLabs/taffy) for auto layout.
+[taffy](https://github.com/DioxusLabs/taffy) for auto layout. Booleans,
+Shape Builder, offsets and stroke outlines come from
+[VectorCraft](https://github.com/storytold/vectorcraft)'s geometry crates.
 
 ## Licence
 

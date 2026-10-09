@@ -1,0 +1,15 @@
+[package]
+name = "omavec-fig"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Best-effort .fig importer for Omavec"
+
+[dependencies]
+flate2 = "1.1.10"
+kiwi-schema = "0.2.1"
+omavec-engine = { version = "0.0.1", path = "../omavec-engine" }
+ruzstd = "0.9"
+serde_json = "1.0.151"
+thiserror = "2.0.20"
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }

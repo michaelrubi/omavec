@@ -1,0 +1,23 @@
+[package]
+name = "omavec-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Omavec's renderer: display list to pixels with vello_cpu"
+
+[dependencies]
+omavec-engine = { version = "0.0.1", path = "../omavec-engine" }
+kurbo = "0.13.1"
+peniko = "0.6.1"
+vello_cpu = { version = "0.3.0", features = ["multithreading"] }
+
+[dev-dependencies]
+pollster = "1.0.1"
+# examples/canvas_bench.rs only: the GPU renderer the canvas was measured
+# against. Without `debug_layers` it doesn't report whether a frame
+# overflowed its buffers.
+vello = { version = "0.11.0", features = ["debug_layers"] }
+# examples/text.rs only. skrifa is the version vello_cpu draws glyphs with.
+fontique = "0.12.0"
+parley = "0.12.0"
+skrifa = "0.44.0"

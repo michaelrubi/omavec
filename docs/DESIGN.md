@@ -9,7 +9,7 @@ app.
 
 It is an independent project, not part of Omarchy.
 
-Status: scoping. No code yet. The decisions behind this document are in
+Status: Phase 0 (foundations and spikes). The decisions behind this document are in
 [DECISIONS.md](DECISIONS.md); the order of work is in
 [ROADMAP.md](ROADMAP.md).
 
@@ -49,9 +49,9 @@ crates/
                   text layout (parley), components, variables, undo, the
                   .omavec format, SVG import/export, and the display list.
                   (No UI or GPU; headlessly testable.)
-  omavec-render   display list → vello Scene. GPU path (vello on wgpu) for
-                  the canvas; CPU path (vello_cpu) for headless PNG export
-                  and golden-image tests.
+  omavec-render   display list → pixels with vello_cpu: on a worker thread
+                  for the canvas, and directly for headless PNG export and
+                  golden-image tests. (No GPU.)
   omavec-fig      best-effort .fig importer (kiwi decoding → engine nodes).
                   Kept separate because the format changes under us.
   omavec          the app: egui UI on wgpu, canvas, tools, commands,
@@ -124,8 +124,10 @@ struct VectorNetwork {
 
 - A vertex can have any number of segments (branches, webs, T-joins).
 - Regions are the fillable faces. They are found from the planar graph
-  (smallest cycles, as in Figma's paint bucket) and can carry their own
-  fills, so one network can hold a multi-colour icon.
+  (smallest cycles, as in Figma's paint bucket; "Phase 0 findings" below
+  has the algorithm) and can carry their own fills, so one network can
+  hold a multi-colour icon. A region is a list of loops, each a list of
+  segments with a direction, so it can have holes.
 - Rendering, booleans and export convert regions and open chains to
   `kurbo::BezPath`. SVG import goes the other way: subpaths become chains,
   and shared endpoints are merged.
@@ -172,27 +174,38 @@ transformed canvas.
 ### Rendering
 
 ```
-engine document ──► display list ──► omavec-render ──► vello::Scene ──► wgpu texture ──► egui
-   (dirty nodes)     (per node,          (per-node scene          (vello 0.11,      (canvas panel,
-                     cached)              fragments, appended      wgpu 30)          same wgpu 30
-                                          with the view transform)                   device)
+engine document ──► display list ──► omavec-render ──► frame (RGBA) ──► egui texture
+   (dirty nodes)     (per node,        (vello_cpu, on the       (uploaded when      (canvas panel)
+                     cached)            canvas's worker thread)   it changes)
 ```
 
-- vello renders the whole canvas on the GPU every frame it changes,
-  straight from curves, so zooming never shows stale tiles.
-- Each node's encoded scene fragment is cached and appended with the view
-  transform, so panning and zooming re-encode nothing.
+- `vello_cpu` draws the canvas on a worker thread, straight from curves,
+  so zooming never shows stale tiles. The UI thread only uploads the
+  finished frame as a texture, so a heavy document never stalls a panel or
+  a drag.
+- While a frame is on its way, the last one is shown moved and scaled to
+  where its pixels now belong, so panning and zooming answer at once and
+  sharpen a moment later. The worker draws only the newest view asked for.
+- `vello_cpu` keeps no scene between frames, so the renderer skips what is
+  off screen before drawing; that is most of the cost of a zoomed-in view.
+- Nothing is drawn while nothing changes: an idle canvas uses no CPU.
+- Headless export (CLI, tests) uses the same renderer on the calling
+  thread, so an export is what the canvas showed. Golden images need no
+  GPU.
+- Blurs and shadows are `vello_cpu` filter layers. Those only work on a
+  single-threaded context, so each effect is drawn on its own small
+  context, cropped to what it can reach, and drawn into the frame as an
+  image, as VectorCraft does (`crates/render/src/fx.rs`). The result is
+  cached per node and zoom. A shadow on a rounded rectangle, the common
+  case in UI work, takes `vello_cpu`'s analytic shortcut instead.
 - Canvas overlays (selection handles, smart guides, Shape Builder
-  highlights, vector edit handles) are a separate vello layer drawn on top.
-  egui draws only the UI around the canvas.
-- Headless export (CLI, tests) uses `vello_cpu`, with no GPU needed.
-- **Known gap:** vello has limited support for blur filters. Shadows and
-  blurs on arbitrary shapes may need our own wgpu pass (render the node to
-  a texture, blur it, composite it). Phase 0 checks this.
-- **The alternative:** VectorCraft renders its canvas with `vello_cpu` on a
-  worker thread and only composites on the GPU, with blurs, shadows and
-  glows as `vello_cpu` filter layers. Phase 0 measures both and picks one;
-  the diagram above assumes vello on the GPU.
+  highlights, vector edit handles) are drawn by egui's painter on top of
+  the frame, so they follow the pointer without waiting for a render.
+
+Vello on the GPU was the first plan and was measured against this in
+Phase 0; see "Phase 0 findings" below for the numbers and why it lost.
+`vello_hybrid` (the same CPU front end with GPU compositing) is the
+upgrade path if 4K canvases get slow: its API is close to `vello_cpu`'s.
 
 ### Undo
 
@@ -287,6 +300,11 @@ Figma's defaults, plus Illustrator's letters for the tools Figma lacks.
 | Ctrl+E | Flatten | Ctrl+Shift+O | Outline stroke |
 | Ctrl+Shift+H | Show/hide | Ctrl+Shift+L | Lock/unlock |
 | Shift+1 / Shift+2 | Zoom to fit / selection | Ctrl+K, Ctrl+/ | Command palette |
+| Ctrl+= / Ctrl+- | Zoom in / out | Shift+0 | Zoom to 100% |
+| Ctrl+\ | Show/hide UI | Ctrl+Q | Quit |
+
+On the canvas: the wheel pans, Ctrl+wheel or a pinch zooms about the
+pointer, and middle drag or Space+drag pans.
 
 ## Open-source references
 
@@ -296,7 +314,7 @@ GPL-3.0.
 
 | Project | Take | How |
 | --- | --- | --- |
-| Linebender (`kurbo`, `vello`, `parley`, `fontique`, `peniko`, `linesweeper`, `vello_cpu`) | Curve maths, GPU rendering, text, booleans | Dependencies |
+| Linebender (`kurbo`, `vello_cpu`, `parley`, `fontique`, `peniko`, `linesweeper`) | Curve maths, rendering, text, booleans | Dependencies |
 | `taffy` | Flexbox/grid layout | Dependency |
 | `cavalier_contours`, `i_overlay` | Polyline offsetting; robust polygon booleans as a fallback | Dependencies |
 | `usvg`, `svg2pdf` | SVG import, PDF export | Dependencies |
@@ -308,12 +326,206 @@ GPL-3.0.
 | Figma (blog posts and docs) | Vector network semantics, paint bucket behaviour, auto layout and constraint rules, shortcut list | Behaviour reference |
 | `fig2sketch` (Sketch, MIT) | How `.fig` node changes map to a document | Reference for `omavec-fig` |
 
+## Phase 0 findings
+
+What the spikes measured, on the machine Omavec is built on (i9-13900H,
+Intel Iris Xe and an RTX 4070 Laptop GPU, 2560 × 1440). The code is in
+each crate's `examples/`.
+
+### Canvas renderer: `vello_cpu`
+
+`cargo run --release -p omavec-render --example canvas_bench` draws 10,000
+random cubic blobs (translucent, overlapping, scattered over 8,000 units)
+into a 2560 × 1440 frame with both renderers and takes the median of 30
+frames. Times are milliseconds per frame.
+
+| 10,000 paths | 100% (648 on screen) | 6400% (6) | 5% (10,000) |
+| --- | --- | --- | --- |
+| `vello_cpu`, 8 threads, off-screen paths skipped | 2.0 | 1.3 | 2.7 |
+| `vello_cpu`, 1 thread, off-screen paths skipped | 5.9 | 3.1 | 11.3 |
+| `vello_cpu`, 8 threads, every path | 2.5 | 4.9 | 2.7 |
+| vello on Iris Xe, whole scene appended | 4.2 | **wrong frame** | 4.2 |
+| vello on Iris Xe, off-screen paths skipped | 3.1 | 3.1 | 4.9 |
+| vello on RTX 4070, whole scene appended | 1.0 | **wrong frame** | 1.4 |
+| vello on RTX 4070, off-screen paths skipped | 0.9 | 1.0 | 1.9 |
+
+| 100,000 paths | 100% (6,522) | 6400% (40) | 5% (100,000) |
+| --- | --- | --- | --- |
+| `vello_cpu`, 8 threads, off-screen paths skipped | 11.1 | 3.0 | 21.5 |
+| vello on Iris Xe, off-screen paths skipped | 16.1 | 7.5 | 35.9 |
+| vello on RTX 4070, off-screen paths skipped | 3.2 | 2.0 | 15.5 |
+| vello, whole scene appended (either GPU) | **wrong frame** | **wrong frame** | 30.4 / 9.0 |
+
+Uploading a `vello_cpu` frame to the GPU adds 2.6 ms (Iris Xe) to 3.6 ms
+(RTX) at this size. The two renderers' frames match to within 0.7% RMSE.
+
+Decision: **`vello_cpu` on a worker thread.**
+
+- Omavec opens on the integrated GPU, as Omapix does, to keep a laptop's
+  discrete GPU asleep. There, vello is no faster than `vello_cpu` plus its
+  upload: 3–5 ms against 4–5 ms at 10,000 paths, and slower at 100,000.
+  Only the discrete GPU is clearly ahead, and every case is already inside
+  a 60 Hz frame at 10,000 paths.
+- vello 0.11's GPU buffers have fixed sizes
+  (`vello_encoding::BufferSizes`: 2²¹ lines, segments and tiles, 2¹⁸ bin
+  entries). A scene that needs more draws a wrong frame or leaves the last
+  one on screen, and `render_to_texture` returns `Ok`. Zooming to 6400%
+  with 10,000 paths in the scene does it, because off-screen paths are
+  flattened at full size. Skipping them first avoids that case, but a busy
+  visible scene can still overflow, and the only way to find out is a
+  debug feature that reads buffers back every frame.
+- vello on the GPU can blur only rounded rectangles. `vello_cpu` has blur
+  and drop-shadow filter layers for any shape (below).
+- One renderer draws the canvas, CLI exports and golden-image tests, so
+  they cannot disagree, and none of them needs a GPU. vello and its
+  shaders leave the build, and so does the need to keep vello and egui on
+  the same wgpu.
+
+What it costs: panning a heavy document uses several cores instead of the
+GPU; a 4K canvas has 2.25 times the pixels to draw and upload; and
+`vello_cpu` is young (0.3). egui itself links `vello_cpu` 0.1 for its own
+drawing, so two versions are in the tree.
+
+### Blurs and shadows: `vello_cpu` filter layers, drawn off to the side
+
+`cargo run --release -p omavec-render --example effects` puts a drop
+shadow and a layer blur on a star with curved sides. Each effect is drawn
+on its own single-threaded context, cropped to its reach, then drawn into
+the frame as an image.
+
+| Effect on one shape | σ 4 | σ 16 | σ 64 |
+| --- | --- | --- | --- |
+| Drop shadow, 300 px star | 2.4 ms | 2.1 ms | 6.4 ms |
+| Layer blur, 300 px star | 2.1 ms | 1.6 ms | 4.6 ms |
+| Drop shadow, 1,200 px star | 23 ms | 21 ms | 29 ms |
+| Layer blur, 1,200 px star | 27 ms | 15 ms | 18 ms |
+
+Compositing six of them into a frame costs about 1 ms, and a blurred
+rounded rectangle (`fill_blurred_rounded_rect`) costs nothing measurable.
+So: icon-sized effects are cheap, screen-sized ones are not, and the image
+must be cached per node and zoom and reused while panning. Effects on
+different nodes can be drawn in parallel, since each has its own context.
+Inner shadow and background blur were not prototyped; VectorCraft draws
+inner glows as a blurred inverse silhouette clipped to the shape, which is
+the plan for inner shadows.
+
+### `vectorcraft-pathops`: use it as it is
+
+`cargo run --release -p omavec-geom --example pathops` runs the booleans
+and Shape Builder regions and checks every result against the inputs on a
+300 × 300 grid of points, without using the library to do it.
+
+| Case | Time | Anchors in → out | Wrong grid points |
+| --- | --- | --- | --- |
+| Two circles: union, intersect, subtract, exclude | 63 µs each | 14 → 7–18 | 0.00% |
+| Twenty overlapping curved shapes: union | 4.2 ms | 174 → 21 | 0.00% |
+| Twenty shapes: exclude (odd count) | 3.9 ms | 174 → 1,046 in 207 pieces | 0.03% |
+| Twenty shapes: first minus the rest | 3.8 ms | 174 → 17 | 0.00% |
+| Three-circle Venn: regions | 0.15 ms | 7 regions, 53 anchors | 0.00% |
+| Twenty shapes: `regions` / `shape_builder` with edges | 7.3 ms / 18 ms | 425 regions, 2,066 anchors | not checked |
+| Rectangles sharing a whole or part edge | 5 µs | 8 → 4–8, or nothing | 0.00% |
+| Identical circles | 66 µs | 14 → 7 or nothing | 0.00% |
+| Circles touching outside, and inside | 45 µs | 13 → 6–13, or nothing | ≤ 0.03% |
+| Circle on a rounded rectangle's corner arc | 240 µs | 18 → 10–15 | ≤ 0.04% |
+
+No panics and no errors, areas agree with the closed forms to five digits,
+and `A − B` is not confused with `B − A`. Results stay curves and come
+back with about as many anchors as went in. Live booleans can re-evaluate
+on every drag frame; Shape Builder's arrangement of a busy selection
+(18 ms) is built once when the tool starts, not per pointer move. Neither
+`i_overlay` nor raw `linesweeper` is needed. Its kurbo (0.13.1) is the one
+`vello_cpu` and peniko use.
+
+### Vector networks: faces from a walk round each vertex
+
+`omavec_geom::network` holds the spike: `VectorNetwork` (vertices,
+segments with tangents relative to their vertices, regions as loops of
+half-edges), `faces()`, and conversion to and from `BezPath` and
+VectorCraft's `PathData`.
+
+- **Finding faces.** Sort the half-edges leaving each vertex by angle.
+  Walking a half-edge and then always taking the next one clockwise from
+  the way back traces one face; every half-edge is on exactly one walk.
+  Walks with positive area are faces, and the one negative walk per
+  connected piece is its outside. Dead ends drop out of a walk (a segment
+  walked there and back bounds nothing), and a piece that sits inside
+  another piece's face becomes a hole in the smallest face that holds it.
+- **Checked against a flood fill.** On random grids of straight edges, a
+  flood fill over the cells says which cells are enclosed and which belong
+  together, with no geometry involved. `faces()` must give exactly those
+  areas, holes and islands included. On random bent grids with diagonals
+  it must satisfy Euler's formula (faces = segments − vertices + pieces)
+  with no two faces overlapping. Both hold over 20,000 random graphs, and
+  networks full of nonsense (missing vertices, NaN, loops on one vertex)
+  never panic.
+- **Paths.** `to_bezpath` writes each region's loops as closed subpaths
+  and the segments no region uses as open runs; `from_bezpath` merges
+  points that coincide into one vertex and an edge two subpaths share into
+  one segment, so two squares side by side come in as six vertices and
+  seven segments. A network goes out through `PathData` and comes back
+  with the same vertices, segments and faces. `stroke_path` gives every
+  segment once, joined into the longest runs, which is what a stroke
+  follows.
+- **Speed** (`cargo run --release -p omavec-geom --example network`):
+  faces of a 50 × 50 mesh (4,900 segments, 2,401 faces) in 1.3 ms, of a
+  200 × 200 mesh (79,600 segments) in 23 ms, and of 2,500 islands inside
+  one face in 7.5 ms.
+- **Left for Phase 2.** Segments that cross without a vertex (run them
+  through `vectorcraft-pathops`' planar map first), curves that leave a
+  vertex in exactly the same direction and curvature, per-vertex corner
+  radius and handle mirroring, and an R-tree instead of the hash grid that
+  merges points.
+
+### Text: parley, fontique and skrifa fit together
+
+`cargo run --release -p omavec-render --example text` lays out one line at
+48 px in the system's sans-serif and in JetBrains Mono, draws it with
+`vello_cpu`'s glyph runs, turns the same glyphs into one `BezPath` with
+skrifa, and compares the two renderings pixel by pixel.
+
+- fontique resolves the same files `fc-match` does, for a generic family
+  and for a family by name. Opening the system collection (798 fonts
+  here) takes 15 ms, once.
+- parley lays the line out in 0.1 to 0.5 ms the first time a font is used
+  and 7 to 9 µs after that. Kerning applies. Neither font has `fi` or
+  `fl` ligatures, so those weren't exercised.
+- Outlines for the 29 glyphs take 5 µs and match the glyph-run rendering:
+  0.000% and 0.002% of pixels differ. Font units are y-up, so the pen
+  flips y as it goes.
+- `vello_cpu` 0.3, parley 0.12 and skrifa 0.44 share one skrifa,
+  read-fonts and peniko, so a font from parley's run goes straight into
+  `glyph_run` with no conversion.
+- For the text tool: `glyph_run` hints by default, which moves outlines
+  by up to a pixel; Omavec draws text with `.hint(false)` so the canvas
+  matches the exported outlines. A line can come back as several glyph
+  runs when a character falls back to another font; draw and outline
+  every run. fontique's `Query` borrows the collection, so read family
+  names after the query is dropped.
+
+### `.fig`: `kiwi-schema` reads current files
+
+`omavec_fig::decode` reads four real files saved between 2022 and 2026
+(file versions 20, 48 and 106; 222 to 558 schema definitions) and
+reproduces the node trees that fig2sketch's own decoder gives, exactly.
+`cargo run -p omavec-fig --example fig_dump -- file.fig` prints one.
+
+- `kiwi-schema` 0.2.1 already handles the `int64` and `uint64` fields
+  newer schemas use. Nothing had to be patched.
+- A `.fig` is a zip holding `canvas.fig`, `thumbnail.png`, `meta.json` and
+  `images/`; older ones can be the bare `canvas.fig`. That file is
+  `fig-kiwi`, a version, then two length-prefixed chunks: the schema and
+  the message. Version 106 compresses the schema with raw deflate and the
+  message with zstd; older files use deflate for both.
+- Children are ordered by `parentIndex.position`, a fractional-index
+  string compared as text, not a number.
+- Decoding is fast: 0.3 ms for a 100 KB file.
+
 ## Risks
 
-1. **Blurs and shadows in vello.** If vello can't blur arbitrary shapes
-   yet, effects need our own render-to-texture passes, which costs
-   complexity and per-frame time. Mitigation: VectorCraft's `vello_cpu`
-   canvas already draws them; Phase 0 decides between the two.
+1. ~~**Blurs and shadows in vello.**~~ Settled in Phase 0: `vello_cpu`
+   filter layers draw them on any shape. What remains is their cost on
+   large shapes (15–30 ms each at 1,200 px), which caching per node and
+   zoom has to hide.
 2. **Robustness of curve booleans.** `linesweeper` is young. Shape Builder
    and live booleans have to survive coincident edges, tangencies and tiny
    slivers. Mitigation: `vectorcraft-pathops` wraps it with refitting,
@@ -331,9 +543,13 @@ GPL-3.0.
 6. **Canvas text editing.** IME, selection and cursor movement on a
    transformed canvas are fiddly and egui can't help. Mitigation: build on
    parley's editor; keep v1 text single-style.
-7. **GPU compatibility.** vello relies on compute shaders. Omapix already
-   runs wgpu on NVIDIA under Hyprland, so the risk is low; `vello_hybrid`
-   or `vello_cpu` are the fallbacks.
+7. ~~**GPU compatibility.**~~ Gone with the move to `vello_cpu`: the GPU
+   only shows a texture, which egui already does for the rest of the UI.
+8. **CPU rendering at 4K.** `vello_cpu` holds 60 Hz at 2560 × 1440 with
+   10,000 paths and falls to about 40 Hz with 100,000 all on screen. A 4K
+   display has 2.25 times the pixels. Mitigation: the last frame is
+   reprojected while the next one draws, so interaction never waits;
+   `vello_hybrid` if that isn't enough.
 
 ## Testing
 

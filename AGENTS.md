@@ -2,7 +2,7 @@
 
 Omavec is a local-first vector design app for Omarchy: Figma's frames, auto layout and components plus Illustrator's logo tools (Shape Builder, Offset Path, Outline Stroke, width profiles, envelope distort). It is designed to match Figma muscle memory and feel native to Omarchy. Sibling apps: Omapix (raster, `michaelrubi/omapix`) and Omacull (culling, `michaelrubi/omacull`). Follow their conventions unless a doc here says otherwise. VectorCraft (`storytold/vectorcraft`, an MIT/Apache Illustrator clone in Rust) supplies our geometry crates and is the first reference for Illustrator-side features; see "Borrowing from VectorCraft" in `docs/ROADMAP.md` before writing geometry from scratch.
 
-**Status: scoping.** Read `docs/DECISIONS.md`, `docs/DESIGN.md` and `docs/ROADMAP.md` before starting work. Work through `docs/ROADMAP.md` in order, and strike items through with "(done)" when finished.
+**Status: Phase 0 (foundations and spikes).** Read `docs/DECISIONS.md`, `docs/DESIGN.md` and `docs/ROADMAP.md` before starting work. Work through `docs/ROADMAP.md` in order, and strike items through with "(done)" when finished.
 
 ## Principles
 
@@ -12,27 +12,29 @@ Omavec is a local-first vector design app for Omarchy: Figma's frames, auto layo
 - **Clean output**: curves stay curves; exported SVG is shippable as-is.
 - **Engine/UI separation**: `omavec-geom` and `omavec-engine` have no UI or GPU dependencies and are 100% headlessly testable.
 
-## Architecture (planned)
+## Architecture
 
 ```
 crates/
   omavec-geom/     vector networks, booleans, offsets, stroke expansion, warps (kurbo, linesweeper)
   omavec-engine/   document tree, layout (taffy), text (parley), components, variables, undo, .omavec IO, SVG
-  omavec-render/   display list → vello Scene (GPU), vello_cpu for headless export and golden tests
+  omavec-render/   display list → pixels with vello_cpu: a worker thread for the canvas, the same code for headless export and golden tests
   omavec-fig/      best-effort .fig importer (kiwi-schema)
   omavec/          egui app on wgpu, canvas, tools, commands, panels, Omarchy theme, CLI
 ```
 
 - **Commands**: every action goes through `Command` in `crates/omavec/src/commands.rs`, so menus, shortcuts, the command palette, `OMAVEC_SCRIPT` and the CLI never diverge.
-- **Versions**: egui/eframe 0.36 and vello 0.11 share wgpu 30. Keep them in step when upgrading.
+- **Versions**: kurbo 0.13 is shared by `vello_cpu` 0.3, peniko and the VectorCraft crates; keep one kurbo in the tree when upgrading any of them (`cargo tree -d`). The canvas doesn't use the GPU, so egui/eframe 0.36 and wgpu 30 upgrade on their own.
 
-## Build and Test Commands (once Phase 0 lands)
+## Build and Test Commands
 
 ```bash
 cargo test                 # engine, geometry and headless UI tests
 cargo build --release
 make install               # installs to ~/.local/bin (the copy Michael actually runs)
 cargo run --release -- file.omavec
+OMAVEC_BLOBS=10000 cargo run --release   # Phase 0's test scene, to try the canvas by hand
+# Planned, not built yet:
 OMAVEC_SCRIPT="Rectangle 0 0 100 100,Ellipse 50 50 100 100,BooleanUnion" cargo run --release
 omavec export file.omavec --frame Logo --format svg,png@2x --out dist/
 ```

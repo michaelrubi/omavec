@@ -1,0 +1,57 @@
+DOCUMENT 0:0 Document
+  CANVAS 0:1 Page 1
+    FRAME 1:2 Horizontal wrap top left
+      ROUNDED_RECTANGLE 1:5 Rectangle 1
+      ROUNDED_RECTANGLE 1:6 Rectangle 2
+      ROUNDED_RECTANGLE 1:7 Rectangle 3
+      ROUNDED_RECTANGLE 1:8 Rectangle 4
+      ROUNDED_RECTANGLE 1:9 Rectangle 5
+      ROUNDED_RECTANGLE 1:10 Rectangle 6
+      ROUNDED_RECTANGLE 1:11 Rectangle 7
+      ROUNDED_RECTANGLE 1:12 Rectangle 8
+    FRAME 2:2 Vertical top left
+      ROUNDED_RECTANGLE 2:3 Rectangle 1
+      ROUNDED_RECTANGLE 2:4 Rectangle 2
+      ROUNDED_RECTANGLE 2:5 Rectangle 3
+      ROUNDED_RECTANGLE 2:6 Rectangle 4
+      ROUNDED_RECTANGLE 2:7 Rectangle 5
+      ROUNDED_RECTANGLE 2:8 Rectangle 6
+      ROUNDED_RECTANGLE 2:9 Rectangle 7
+      ROUNDED_RECTANGLE 2:10 Rectangle 8
+    FRAME 2:11 Vertical middle center
+      ROUNDED_RECTANGLE 2:12 Rectangle 1
+      ROUNDED_RECTANGLE 2:13 Rectangle 2
+      ROUNDED_RECTANGLE 2:14 Rectangle 3
+      ROUNDED_RECTANGLE 2:15 Rectangle 4
+      ROUNDED_RECTANGLE 2:16 Rectangle 5
+      ROUNDED_RECTANGLE 2:17 Rectangle 6
+      ROUNDED_RECTANGLE 2:18 Rectangle 7
+      ROUNDED_RECTANGLE 2:19 Rectangle 8
+    FRAME 2:20 Vertical bottom right
+      ROUNDED_RECTANGLE 2:21 Rectangle 1
+      ROUNDED_RECTANGLE 2:22 Rectangle 2
+      ROUNDED_RECTANGLE 2:23 Rectangle 3
+      ROUNDED_RECTANGLE 2:24 Rectangle 4
+      ROUNDED_RECTANGLE 2:25 Rectangle 5
+      ROUNDED_RECTANGLE 2:26 Rectangle 6
+      ROUNDED_RECTANGLE 2:27 Rectangle 7
+      ROUNDED_RECTANGLE 2:28 Rectangle 8
+    FRAME 1:31 Horizontal wrap bottom right
+      ROUNDED_RECTANGLE 1:32 Rectangle 1
+      ROUNDED_RECTANGLE 1:33 Rectangle 2
+      ROUNDED_RECTANGLE 1:34 Rectangle 3
+      ROUNDED_RECTANGLE 1:35 Rectangle 4
+      ROUNDED_RECTANGLE 1:36 Rectangle 5
+      ROUNDED_RECTANGLE 1:37 Rectangle 6
+      ROUNDED_RECTANGLE 1:38 Rectangle 7
+      ROUNDED_RECTANGLE 1:39 Rectangle 8
+    FRAME 1:22 Horizontal wrap middle center
+      ROUNDED_RECTANGLE 1:23 Rectangle 1
+      ROUNDED_RECTANGLE 1:24 Rectangle 2
+      ROUNDED_RECTANGLE 1:25 Rectangle 3
+      ROUNDED_RECTANGLE 1:26 Rectangle 4
+      ROUNDED_RECTANGLE 1:27 Rectangle 5
+      ROUNDED_RECTANGLE 1:28 Rectangle 6
+      ROUNDED_RECTANGLE 1:29 Rectangle 7
+      ROUNDED_RECTANGLE 1:30 Rectangle 8
+  CANVAS 0:2 Internal Only Canvas

@@ -1,0 +1,45 @@
+# Maintainer: Michael Rubi <michael@rubiconetic.com>
+
+# Builds Omavec from the newest commit on main. From this folder:
+#   makepkg -si
+
+pkgname=omavec-git
+pkgver=0.0.1
+pkgrel=1
+pkgdesc="Local-first vector design app: Figma's frames and components with Illustrator's path tools"
+arch=('x86_64')
+url="https://github.com/michaelrubi/omavec"
+license=('GPL-3.0-or-later')
+depends=('gcc-libs' 'glibc' 'vulkan-icd-loader' 'wayland' 'libxkbcommon' 'fontconfig'
+         'hicolor-icon-theme')
+makedepends=('cargo' 'git')
+provides=('omavec')
+conflicts=('omavec')
+source=("git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd omavec
+  printf '%s.r%s.g%s' "$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml)" \
+    "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  cd omavec
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd omavec
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release
+}
+
+package() {
+  cd omavec
+  install -Dm755 target/release/omavec "$pkgdir/usr/bin/omavec"
+  install -Dm644 assets/omavec.desktop "$pkgdir/usr/share/applications/omavec.desktop"
+  install -Dm644 assets/omavec.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/omavec.svg"
+}

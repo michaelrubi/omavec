@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use omavec_geom::kurbo::{Affine, Size};
+use omavec_geom::kurbo::{Affine, Point, Rect, Size};
 use serde::{Deserialize, Serialize};
 
 use crate::paint::{Color, Paint, is_no, is_one, is_yes, one, yes};
@@ -94,6 +94,42 @@ pub struct Node {
 
 fn is_identity(transform: &Affine) -> bool {
     *transform == Affine::IDENTITY
+}
+
+impl Node {
+    /// Whether `point`, in this node's own coordinates, is on its shape.
+    /// Pages and groups have no shape of their own.
+    fn covers(&self, point: Point) -> bool {
+        let inside = Rect::from_origin_size((0.0, 0.0), self.size).contains(point);
+        match self.kind {
+            NodeKind::Page | NodeKind::Group => false,
+            NodeKind::Frame { .. } | NodeKind::Rectangle => inside,
+            NodeKind::Ellipse => {
+                let (x, y) = (point.x / self.size.width * 2.0 - 1.0, point.y / self.size.height * 2.0 - 1.0);
+                inside && x * x + y * y <= 1.0
+            }
+        }
+    }
+
+    /// The nodes under `point` (in this node's coordinates), from this
+    /// node's child down to the deepest, taking the front-most at each
+    /// level. Hidden and locked nodes aren't there to be hit. Empty if the
+    /// point is on nothing.
+    pub fn hit(&self, point: Point) -> Vec<NodeId> {
+        for child in self.children.iter().rev().filter(|child| child.visible && !child.locked) {
+            // A transform that can't be undone puts the point nowhere.
+            let local = child.transform.inverse() * point;
+            let covered = child.covers(local);
+            // A frame that clips shows nothing of its children outside itself.
+            let clipped = matches!(child.kind, NodeKind::Frame { clip: true }) && !covered;
+            let mut chain = if clipped { Vec::new() } else { child.hit(local) };
+            if covered || !chain.is_empty() {
+                chain.insert(0, child.id);
+                return chain;
+            }
+        }
+        Vec::new()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -192,6 +228,18 @@ impl Document {
             (parent, nodes) = (Some(node.id), &node.children);
         }
         parent
+    }
+
+    /// From `id`'s own coordinates to its page's: every transform from the
+    /// page down to it.
+    pub fn to_page(&self, id: NodeId) -> Option<Affine> {
+        let mut nodes = &self.pages;
+        let mut transform = Affine::IDENTITY;
+        for index in self.path(id)? {
+            let node = nodes.get(index)?;
+            (transform, nodes) = (transform * node.transform, &node.children);
+        }
+        Some(transform)
     }
 
     fn container(&self, id: NodeId) -> Result<&Node, Error> {

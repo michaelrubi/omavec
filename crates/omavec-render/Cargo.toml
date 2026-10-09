@@ -7,3 +7,13 @@ description = "Omavec's renderer: display list to vello"
 
 [dependencies]
 omavec-engine = { version = "0.0.1", path = "../omavec-engine" }
+kurbo = "0.13.1"
+peniko = "0.6.1"
+vello_cpu = { version = "0.3.0", features = ["multithreading"] }
+
+[dev-dependencies]
+pollster = "1.0.1"
+# examples/canvas_bench.rs only: the GPU renderer the canvas was measured
+# against. Without `debug_layers` it doesn't report whether a frame
+# overflowed its buffers.
+vello = { version = "0.11.0", features = ["debug_layers"] }

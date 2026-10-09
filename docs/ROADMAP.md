@@ -190,12 +190,14 @@ reopen and export.
   there are unsaved changes, and a question before New, Open, Quit or
   closing the window would throw them away. Left: assets, recent files,
   autosave and crash recovery, and `.omavecz`.
-- Canvas: pan (Space/H/middle drag), zoom (Ctrl+wheel, Shift+0/1/2, pinch),
-  pixel grid at high zoom, rulers. Phase 0 already built wheel, middle
-  drag and Space+drag panning, Ctrl+wheel and pinch zoom about the
-  pointer, and Ctrl+= / Ctrl+- / Shift+0. The pixel grid (Shift+', from
-  400%) and rulers (Shift+R) are built; the Hand tool and zoom to fit and
-  to selection are left.
+- ~~Canvas: pan (Space/H/middle drag), zoom (Ctrl+wheel, Shift+0/1/2, pinch),
+  pixel grid at high zoom, rulers.~~ (done) The wheel, middle drag,
+  Space+drag and the Hand tool (H) pan; Ctrl+wheel and a pinch zoom about
+  the pointer; Ctrl+= and Ctrl+- zoom in steps, Shift+0 to 100%, Shift+1
+  to fit the page and Shift+2 to fit the selection. The pixel grid shows
+  from 400% (Shift+' toggles it) and Shift+R shows rulers.
+  Later: the pointer's position marked on the rulers; guides dragged out
+  of them.
 - Selection: click, Shift+click, marquee, deep select (Ctrl+click), select
   in group (double-click / Enter), Esc to parent. Built so far: click
   (the page's child, or what is inside a top-level frame), Shift+click to

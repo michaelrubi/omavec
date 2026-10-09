@@ -9,6 +9,8 @@ use omavec_geom::kurbo::{Affine, Line, ParamCurveNearest, Point, Rect, Size, Vec
 pub enum Tool {
     #[default]
     Move,
+    /// Drags pan the canvas; the canvas does it and the tools see nothing.
+    Hand,
     Frame,
     Rectangle,
     Ellipse,
@@ -18,7 +20,7 @@ impl Tool {
     /// What the tool draws, if it draws.
     fn draws(self) -> Option<NodeKind> {
         match self {
-            Tool::Move => None,
+            Tool::Move | Tool::Hand => None,
             Tool::Frame => Some(NodeKind::Frame { clip: true }),
             Tool::Rectangle => Some(NodeKind::Rectangle),
             Tool::Ellipse => Some(NodeKind::Ellipse),

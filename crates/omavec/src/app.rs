@@ -13,7 +13,13 @@ use crate::theme::{self, Theme};
 use crate::tools::{Keys, Tool, Tools};
 
 /// The tools in the tool bar, with the command that picks each.
-const TOOLS: [(Tool, Command); 4] = [(Tool::Move, Command::MoveTool), (Tool::Frame, Command::FrameTool), (Tool::Rectangle, Command::RectangleTool), (Tool::Ellipse, Command::EllipseTool)];
+const TOOLS: [(Tool, Command); 5] = [
+    (Tool::Move, Command::MoveTool),
+    (Tool::Hand, Command::HandTool),
+    (Tool::Frame, Command::FrameTool),
+    (Tool::Rectangle, Command::RectangleTool),
+    (Tool::Ellipse, Command::EllipseTool),
+];
 
 pub struct App {
     theme: Theme,
@@ -228,7 +234,7 @@ impl App {
                 let nudged = self.tools.nudge(&mut self.history, by);
                 self.check(nudged);
             }
-            Command::MoveTool | Command::FrameTool | Command::RectangleTool | Command::EllipseTool => {
+            Command::MoveTool | Command::HandTool | Command::FrameTool | Command::RectangleTool | Command::EllipseTool => {
                 if let Some((tool, _)) = TOOLS.iter().find(|(_, picks)| *picks == command) {
                     self.tools.tool = *tool;
                 }
@@ -236,6 +242,18 @@ impl App {
             Command::ZoomIn => self.canvas.zoom_by(2.0),
             Command::ZoomOut => self.canvas.zoom_by(0.5),
             Command::ZoomTo100 => self.canvas.zoom_by(1.0 / self.canvas.view.zoom),
+            Command::ZoomToFit | Command::ZoomToSelection => {
+                // Everything on the page, or what is selected.
+                let document = self.history.document();
+                let all = || document.node(self.page).map(|page| page.children.iter().map(|node| node.id).collect()).unwrap_or_default();
+                let nodes: Vec<NodeId> = if command == Command::ZoomToFit { all() } else { self.tools.selection.clone() };
+                let area = self.corners(&nodes).into_iter().flatten().fold(None, |area: Option<Rect>, corner| {
+                    Some(area.map_or(Rect::from_points(corner, corner), |area| area.union_pt(corner)))
+                });
+                if let Some(area) = area {
+                    self.canvas.fit(area);
+                }
+            }
             Command::ToggleRulers => self.canvas.rulers = !self.canvas.rulers,
             Command::TogglePixelGrid => self.canvas.pixel_grid = !self.canvas.pixel_grid,
             Command::ToggleUi => self.show_ui = !self.show_ui,
@@ -257,7 +275,7 @@ impl App {
         const MENUS: [(&str, &[Command]); 3] = [
             ("File", &[Command::New, Command::Open, Command::Save, Command::SaveAs, Command::Quit]),
             ("Edit", &[Command::Undo, Command::Redo, Command::Delete]),
-            ("View", &[Command::ZoomIn, Command::ZoomOut, Command::ZoomTo100, Command::ToggleRulers, Command::TogglePixelGrid, Command::ToggleUi]),
+            ("View", &[Command::ZoomIn, Command::ZoomOut, Command::ZoomTo100, Command::ZoomToFit, Command::ZoomToSelection, Command::ToggleRulers, Command::TogglePixelGrid, Command::ToggleUi]),
         ];
         egui::MenuBar::new().ui(ui, |ui| {
             for (menu, commands) in MENUS {
@@ -348,15 +366,15 @@ impl App {
         }
     }
 
-    /// The corners of each selected node's box, on the page.
-    fn selected(&self) -> Vec<[Point; 4]> {
+    /// The corners of each node's box, on the page.
+    fn corners(&self, nodes: &[NodeId]) -> Vec<[Point; 4]> {
         let document = self.history.document();
         let corners = |id: &NodeId| {
             let (to_page, size) = (document.to_page(*id)?, document.node(*id)?.size);
             let outline = Rect::from_origin_size((0.0, 0.0), size);
             Some([(outline.x0, outline.y0), (outline.x1, outline.y0), (outline.x1, outline.y1), (outline.x0, outline.y1)].map(|corner| to_page * Point::from(corner)))
         };
-        self.tools.selection.iter().filter_map(corners).collect()
+        nodes.iter().filter_map(corners).collect()
     }
 
     /// Lays out the window and returns the rectangle the canvas got.
@@ -402,7 +420,8 @@ impl App {
                     ui.take_available_space();
                 });
         }
-        let selected = self.selected();
+        let selected = self.corners(&self.tools.selection);
+        self.canvas.hand = self.tools.tool == Tool::Hand;
         let (rect, pointer) = egui::CentralPanel::no_frame().show(ui, |ui| self.canvas.show(ui, &self.theme, &selected)).inner;
         let keys = ui.input(|i| Keys { shift: i.modifiers.shift, alt: i.modifiers.alt });
         // A handle is taken from six points away, whatever the zoom.
@@ -589,9 +608,32 @@ mod tests {
     }
 
     #[test]
+    fn shift_1_and_shift_2_fit_the_page_and_the_selection() {
+        let (ctx, mut app, canvas) = app();
+        let on_screen = |app: &App, x: f64, y: f64| app.canvas.view.origin + Vec2::new(x, y) * app.canvas.view.zoom;
+        let middle = Vec2::new(f64::from(canvas.width()), f64::from(canvas.height())) / 2.0;
+        // Nothing on the page: nothing to fit.
+        frame(&ctx, &mut app, key(Key::Num1, Modifiers::SHIFT));
+        assert_eq!(app.canvas.view, crate::canvas::View::default());
+
+        for (from, to) in [((10.0, 10.0), (50.0, 30.0)), ((300.0, 200.0), (340.0, 260.0))] {
+            frame(&ctx, &mut app, key(Key::R, Modifiers::NONE));
+            drag(&ctx, &mut app, canvas.min + vec2(from.0, from.1), canvas.min + vec2(to.0, to.1));
+        }
+        // Both rectangles: 10..340 by 10..260, so its middle is (175, 135).
+        frame(&ctx, &mut app, key(Key::Num1, Modifiers::SHIFT));
+        assert!((on_screen(&app, 175.0, 135.0) - middle).hypot() < 1e-6);
+        let fit = app.canvas.view.zoom;
+        // The selection is the second one alone: closer in, on its middle.
+        frame(&ctx, &mut app, key(Key::Num2, Modifiers::SHIFT));
+        assert!(app.canvas.view.zoom > fit * 2.0);
+        assert!((on_screen(&app, 320.0, 230.0) - middle).hypot() < 1e-6);
+    }
+
+    #[test]
     fn letters_pick_tools_and_escape_goes_back_to_move() {
         let (ctx, mut app, _) = app();
-        for (letter, tool) in [(Key::F, Tool::Frame), (Key::R, Tool::Rectangle), (Key::O, Tool::Ellipse), (Key::V, Tool::Move)] {
+        for (letter, tool) in [(Key::F, Tool::Frame), (Key::R, Tool::Rectangle), (Key::O, Tool::Ellipse), (Key::H, Tool::Hand), (Key::V, Tool::Move)] {
             frame(&ctx, &mut app, key(letter, Modifiers::NONE));
             assert_eq!(app.tools.tool, tool);
         }

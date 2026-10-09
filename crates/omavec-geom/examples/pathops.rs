@@ -1,3 +1,11 @@
+//! Phase 0 spike: what `vectorcraft-pathops` does with curved shapes.
+//!
+//! Times its booleans and Shape Builder regions, counts the anchors that
+//! come back, and checks each result against its inputs on a grid of points
+//! without using the library to do it.
+//!
+//!     cargo run --release -p omavec-geom --example pathops
+
 use std::f64::consts::PI;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Instant;

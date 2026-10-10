@@ -8,6 +8,7 @@ mod clipboard;
 mod commands;
 mod export;
 mod layers_panel;
+mod palette;
 mod properties;
 mod recent;
 mod recovery;

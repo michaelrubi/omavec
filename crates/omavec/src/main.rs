@@ -9,6 +9,8 @@ mod commands;
 mod export;
 mod layers_panel;
 mod properties;
+mod recent;
+mod recovery;
 mod rulers;
 mod theme;
 mod tools;

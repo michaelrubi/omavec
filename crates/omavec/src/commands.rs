@@ -7,6 +7,7 @@ use egui::{Key, KeyboardShortcut, Modifiers};
 pub enum Command {
     New,
     Open,
+    OpenRecent,
     Save,
     SaveAs,
     Export,
@@ -56,9 +57,10 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Command; 48] = [
+    pub const ALL: [Command; 49] = [
         Command::New,
         Command::Open,
+        Command::OpenRecent,
         Command::Save,
         Command::SaveAs,
         Command::Export,
@@ -111,6 +113,7 @@ impl Command {
         match self {
             Command::New => "New",
             Command::Open => "Open…",
+            Command::OpenRecent => "Reopen Last Document",
             Command::Save => "Save",
             Command::SaveAs => "Save As…",
             Command::Export => "Export…",
@@ -200,8 +203,8 @@ impl Command {
             Command::EllipseTool => (Modifiers::NONE, Key::O),
             Command::LineTool => (Modifiers::NONE, Key::L),
             Command::ArrowTool => (Modifiers::SHIFT, Key::L),
-            // Figma gives these two no key.
-            Command::PolygonTool | Command::StarTool => return None,
+            // Figma gives these no key.
+            Command::PolygonTool | Command::StarTool | Command::OpenRecent => return None,
             Command::ZoomIn => (Modifiers::COMMAND, Key::Equals),
             Command::ZoomOut => (Modifiers::COMMAND, Key::Minus),
             Command::ZoomTo100 => (Modifiers::SHIFT, Key::Num0),

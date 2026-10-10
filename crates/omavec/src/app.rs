@@ -11,6 +11,8 @@ use crate::clipboard::Clipboard;
 use crate::commands::Command;
 use crate::layers_panel::{self, LayersPanel};
 use crate::properties::Properties;
+use crate::recent::{self, Recent};
+use crate::recovery::{self, Left, Recovery};
 use crate::theme::{self, Theme};
 use crate::tools::{Grab, Keys, Tool, Tools};
 
@@ -59,6 +61,13 @@ pub struct App {
     /// The window may close: its changes are saved or given up.
     closing: bool,
     clipboard: Clipboard,
+    recent: Recent,
+    /// The document Open Recent is to open, picked from its menu.
+    reopen: Option<PathBuf>,
+    recovery: Recovery,
+    /// A copy of unsaved changes that a session before this one left, and
+    /// the question of what to do with it not yet answered.
+    left: Option<Left>,
     /// Whether V is held, by which Ctrl+V is told from V (see `Command::pressed`).
     v_down: bool,
 }
@@ -84,9 +93,21 @@ impl App {
         ctx.set_visuals(app.theme.visuals());
         app.theme_rx = Some(theme::watch(ctx.clone()));
         app.clipboard.system = true;
-        if let Some(path) = open {
-            app.open(&path);
+        if let Some(config) = recent::home("XDG_CONFIG_HOME", ".config") {
+            app.recent = Recent::load(config.join("recent.toml"));
         }
+        app.recovery = Recovery::new(recent::home("XDG_STATE_HOME", ".local/state").map(|state| state.join("recovery")), std::process::id());
+        if let Some(path) = &open {
+            app.open(path);
+        }
+        // Changes a session before this one never saved: to the document
+        // being opened, or with none asked for, the latest there are.
+        let left = app.recovery.left();
+        app.left = match &app.path {
+            Some(path) => left.into_iter().find(|left| left.path.as_ref() == Some(path)),
+            None if open.is_none() => left.into_iter().next(),
+            None => None,
+        };
         app
     }
 
@@ -101,7 +122,7 @@ impl App {
         canvas.readout = blobs.is_some();
         let document = Document::default();
         let page = document.pages[0].id;
-        Self { theme, theme_rx: None, show_ui: true, canvas, history: History::new(document), tools: Tools::default(), layers: LayersPanel::default(), properties: Properties::default(), page, drawn: None, spike: blobs.is_some(), path: None, dialog: None, status: None, title: String::new(), confirm: None, after_save: None, closing: false, clipboard: Clipboard::default(), v_down: false }
+        Self { theme, theme_rx: None, show_ui: true, canvas, history: History::new(document), tools: Tools::default(), layers: LayersPanel::default(), properties: Properties::default(), page, drawn: None, spike: blobs.is_some(), path: None, dialog: None, status: None, title: String::new(), confirm: None, after_save: None, closing: false, clipboard: Clipboard::default(), v_down: false, recent: Recent::default(), reopen: None, recovery: Recovery::new(None, std::process::id()), left: None }
     }
 
     fn say(&mut self, message: impl Into<String>, wrong: bool) {
@@ -135,6 +156,8 @@ impl App {
     /// Puts `document` on the canvas in place of the one that was there.
     fn set_document(&mut self, document: Document, path: Option<PathBuf>) {
         let Some(page) = document.pages.first().map(|page| page.id) else { return };
+        // Whatever the last document had unsaved is saved by now, or given up.
+        self.recovery.clear();
         (self.history, self.tools, self.page, self.path, self.drawn) = (History::new(document), Tools::default(), page, path, None);
     }
 
@@ -144,10 +167,19 @@ impl App {
         let folder = if path.file_name().is_some_and(|name| name == "document.json") { path.parent().unwrap_or(path) } else { path };
         match file::open(folder) {
             Ok(document) => {
-                self.set_document(document, Some(folder.into()));
+                // Under one name however it was come by, for the recent list
+                // and for finding its recovery copy.
+                let folder = std::fs::canonicalize(folder).unwrap_or_else(|_| folder.into());
+                self.recent.add(&folder);
+                self.set_document(document, Some(folder));
                 self.status = None;
             }
-            Err(error) => self.say(format!("Couldn't open: {error}"), true),
+            Err(error) => {
+                if !folder.exists() {
+                    self.recent.remove(folder);
+                }
+                self.say(format!("Couldn't open: {error}"), true);
+            }
         }
     }
 
@@ -155,6 +187,9 @@ impl App {
         match file::save(self.history.document(), folder) {
             Ok(()) => {
                 self.history.mark_saved();
+                self.recovery.clear();
+                let folder = &std::fs::canonicalize(folder).unwrap_or_else(|_| folder.into());
+                self.recent.add(folder);
                 self.path = Some(folder.into());
                 self.say(format!("Saved {}", name_of(folder)), false);
             }
@@ -235,7 +270,13 @@ impl App {
         match command {
             Command::New => self.set_document(Document::default(), None),
             Command::Open => self.ask(command, ctx),
+            Command::OpenRecent => {
+                if let Some(path) = self.reopen.take() {
+                    self.open(&path);
+                }
+            }
             _ => {
+                self.recovery.clear();
                 self.closing = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
@@ -251,7 +292,7 @@ impl App {
                 self.run(Command::Save, ctx);
             }
             Choice::Discard => self.proceed(command, ctx),
-            Choice::Cancel => {}
+            Choice::Cancel => self.reopen = None,
         }
     }
 
@@ -259,8 +300,14 @@ impl App {
         match command {
             // These replace the document or close it: ask first if it has
             // changes that aren't saved.
-            Command::New | Command::Open | Command::Quit if self.history.is_dirty() => self.confirm = Some(command),
-            Command::New | Command::Open | Command::Quit => self.proceed(command, ctx),
+            // From its menu the document is picked already; otherwise the last one.
+            Command::OpenRecent if self.reopen.is_none() && self.recent.files().is_empty() => {}
+            Command::OpenRecent if self.reopen.is_none() => {
+                self.reopen = self.recent.files().first().cloned();
+                self.run(command, ctx);
+            }
+            Command::New | Command::Open | Command::OpenRecent | Command::Quit if self.history.is_dirty() => self.confirm = Some(command),
+            Command::New | Command::Open | Command::OpenRecent | Command::Quit => self.proceed(command, ctx),
             Command::SaveAs => self.ask(command, ctx),
             Command::Export if self.exported().is_empty() => self.say("Nothing to export: select something, or draw a frame", true),
             Command::Export => self.ask(command, ctx),
@@ -401,9 +448,25 @@ impl App {
         }
     }
 
+    /// The documents opened lately, each by its name, under Open Recent.
+    fn recent_menu(&mut self, ui: &mut Ui) {
+        let files = self.recent.files().to_vec();
+        ui.add_enabled_ui(!files.is_empty(), |ui| {
+            ui.menu_button("Open Recent", |ui| {
+                for path in files {
+                    if ui.button(name_of(&path)).on_hover_text(path.display().to_string()).clicked() {
+                        ui.close();
+                        self.reopen = Some(path);
+                        self.run(Command::OpenRecent, ui.ctx());
+                    }
+                }
+            });
+        });
+    }
+
     fn menu_bar(&mut self, ui: &mut Ui) {
         const MENUS: [(&str, &[Command]); 4] = [
-            ("File", &[Command::New, Command::Open, Command::Save, Command::SaveAs, Command::Export, Command::Quit]),
+            ("File", &[Command::New, Command::Open, Command::OpenRecent, Command::Save, Command::SaveAs, Command::Export, Command::Quit]),
             ("Edit", &[Command::Undo, Command::Redo, Command::Cut, Command::Copy, Command::Paste, Command::Duplicate, Command::Delete, Command::SelectAll, Command::SelectChildren, Command::SelectParent]),
             ("Object", &[Command::Group, Command::Ungroup, Command::FrameSelection, Command::BringToFront, Command::BringForward, Command::SendBackward, Command::SendToBack, Command::ToggleVisible, Command::ToggleLocked]),
             ("View", &[Command::ZoomIn, Command::ZoomOut, Command::ZoomTo100, Command::ZoomToFit, Command::ZoomToSelection, Command::ToggleRulers, Command::TogglePixelGrid, Command::ToggleSnap, Command::ToggleUi]),
@@ -412,7 +475,11 @@ impl App {
             for (menu, commands) in MENUS {
                 ui.menu_button(menu, |ui| {
                     for command in commands {
-                        self.menu_item(ui, *command);
+                        if *command == Command::OpenRecent {
+                            self.recent_menu(ui);
+                        } else {
+                            self.menu_item(ui, *command);
+                        }
                     }
                 });
             }
@@ -461,10 +528,52 @@ impl App {
         }
     }
 
+    /// What to do with the unsaved changes a session before this one left.
+    fn recover(&mut self, bring_back: bool) {
+        let Some(left) = self.left.take() else { return };
+        if bring_back {
+            match left.open() {
+                Ok(document) => {
+                    self.set_document(document, left.path.clone());
+                    // It is what was being worked on, not what is on disk.
+                    self.history.mark_unsaved();
+                    self.say(format!("Recovered {}", left.name()), false);
+                }
+                // The copy stays, to be tried by hand.
+                Err(error) => return self.say(format!("Couldn't recover {}: {error}", left.copy.display()), true),
+            }
+        }
+        left.discard();
+    }
+
+    /// Asks about those changes, over everything else until it's answered.
+    fn offer(&mut self, ctx: &egui::Context) {
+        let Some(left) = &self.left else { return };
+        let mut answer = None;
+        let modal = egui::Modal::new(egui::Id::new("recover")).show(ctx, |ui| {
+            ui.label(format!("Omavec closed without saving the changes to {}.", left.name()));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                for (label, bring_back) in [("Recover", Some(true)), ("Discard", Some(false)), ("Not Now", None)] {
+                    if ui.button(label).clicked() {
+                        answer = Some(bring_back);
+                    }
+                }
+            });
+        });
+        match answer {
+            Some(Some(bring_back)) => self.recover(bring_back),
+            // Left where it is, to be asked about next time.
+            Some(None) => self.left = None,
+            None if modal.should_close() => self.left = None,
+            None => {}
+        }
+    }
+
     fn keys(&mut self, ctx: &egui::Context) {
         // While a text field has focus, keys edit the text; while a question
         // is up, it is answered first.
-        if !ctx.egui_wants_keyboard_input() && self.confirm.is_none() {
+        if !ctx.egui_wants_keyboard_input() && self.confirm.is_none() && self.left.is_none() {
             for command in Command::pressed(ctx, &mut self.v_down) {
                 self.run(command, ctx);
             }
@@ -625,11 +734,17 @@ impl eframe::App for App {
         }
         self.keys(ctx);
         self.update_title(ctx);
+        // A copy of unsaved changes, in case this session never saves them.
+        self.recovery.keep(&self.history, self.path.as_deref(), std::time::Instant::now());
+        if self.history.is_dirty() {
+            ctx.request_repaint_after(recovery::EVERY);
+        }
     }
 
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.show(ui);
         self.confirm(ui.ctx());
+        self.offer(ui.ctx());
     }
 }
 
@@ -923,6 +1038,93 @@ mod tests {
         app.tools.selection.clear();
         app.export_to(&folder.join("all"));
         assert_eq!(names(&folder.join("all")), ["Frame.png"]);
+        let _ = std::fs::remove_dir_all(folder);
+    }
+
+    #[test]
+    fn changes_a_session_never_saved_are_offered_to_the_next() {
+        let folder = std::env::temp_dir().join(format!("omavec-app-recovery-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        // Sessions with process ids that nothing has.
+        let (first, second) = (u32::MAX - 21, u32::MAX - 22);
+        let (ctx, mut app, canvas) = app();
+        app.recovery = Recovery::new(Some(folder.clone()), first);
+        frame(&ctx, &mut app, key(Key::R, Modifiers::NONE));
+        drag(&ctx, &mut app, canvas.min + vec2(50.0, 60.0), canvas.min + vec2(250.0, 160.0));
+        app.recovery.keep(&app.history, Some(Path::new("/somewhere/Logo.omavec")), std::time::Instant::now() + recovery::EVERY * 2);
+        let copy = folder.join(format!("{first}.path"));
+        while !copy.exists() {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+
+        let next = |answer: bool| {
+            let (ctx, mut next, _) = self::app();
+            next.recovery = Recovery::new(Some(folder.clone()), second);
+            next.left = next.recovery.left().into_iter().next();
+            assert_eq!(next.left.as_ref().map(Left::name), Some("Logo".into()));
+            // Until it is answered, keys do nothing.
+            frame(&ctx, &mut next, key(Key::R, Modifiers::NONE));
+            assert_eq!(next.tools.tool, Tool::Move);
+            if answer {
+                next.recover(true);
+            }
+            next
+        };
+        // Brought back: the document, where it belongs, and still to be saved,
+        // even with everything in this session undone.
+        let mut recovered = next(true);
+        assert_eq!(recovered.history.document(), app.history.document());
+        assert_eq!((recovered.path.as_deref(), recovered.history.is_dirty(), recovered.left.is_none()), (Some(Path::new("/somewhere/Logo.omavec")), true, true));
+        assert!(!recovered.history.undo() && recovered.history.is_dirty());
+        assert_eq!(recovered.status, Some(("Recovered Logo".into(), false)));
+        // And the copy is gone: nobody is asked twice.
+        assert!(recovered.recovery.left().is_empty() && !copy.exists());
+
+        // Thrown away: nothing changes, and the copy goes all the same.
+        frame(&ctx, &mut app, key(Key::ArrowRight, Modifiers::NONE));
+        app.recovery.keep(&app.history, Some(Path::new("/somewhere/Logo.omavec")), std::time::Instant::now() + recovery::EVERY * 4);
+        while !copy.exists() {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let mut asked = next(false);
+        asked.recover(false);
+        assert_eq!((asked.history.document(), asked.history.is_dirty()), (&Document::default(), false));
+        assert!(asked.recovery.left().is_empty());
+        let _ = std::fs::remove_dir_all(folder);
+    }
+
+    #[test]
+    fn a_document_opened_or_saved_can_be_reopened_from_the_recent_list() {
+        let folder = std::env::temp_dir().join(format!("omavec-app-recent-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        let (ctx, mut app, canvas) = app();
+        // Nothing recent: nothing happens.
+        app.run(Command::OpenRecent, &ctx);
+        assert!(app.confirm.is_none() && app.path.is_none());
+        frame(&ctx, &mut app, key(Key::R, Modifiers::NONE));
+        drag(&ctx, &mut app, canvas.min + vec2(50.0, 60.0), canvas.min + vec2(250.0, 160.0));
+        let (one, two) = (folder.join("One.omavecz"), folder.join("Two.omavec"));
+        std::fs::create_dir_all(&folder).unwrap();
+        app.save_to(&one);
+        app.save_to(&two);
+        let names = |app: &App| app.recent.files().iter().map(|path| name_of(path)).collect::<Vec<_>>();
+        assert_eq!(names(&app), ["Two", "One"]);
+        // Picked from the menu: that one. With changes to lose, asked first.
+        frame(&ctx, &mut app, key(Key::ArrowRight, Modifiers::NONE));
+        app.reopen = Some(app.recent.files()[1].clone());
+        app.run(Command::OpenRecent, &ctx);
+        assert_eq!((app.confirm, name_of(app.path.as_deref().unwrap())), (Some(Command::OpenRecent), "Two".into()));
+        app.decide(Choice::Discard, &ctx);
+        assert_eq!((name_of(app.path.as_deref().unwrap()), app.history.is_dirty(), names(&app)), ("One".into(), false, vec!["One".to_string(), "Two".to_string()]));
+        // Not picked: the last one, which is the one open.
+        app.run(Command::OpenRecent, &ctx);
+        assert_eq!(name_of(app.path.as_deref().unwrap()), "One");
+        // One that has gone says so and leaves the list.
+        std::fs::remove_dir_all(&two).unwrap();
+        app.reopen = Some(app.recent.files()[1].clone());
+        app.run(Command::OpenRecent, &ctx);
+        assert!(app.status.as_ref().is_some_and(|(message, wrong)| *wrong && message.starts_with("Couldn't open")));
+        assert_eq!(names(&app), ["One"]);
         let _ = std::fs::remove_dir_all(folder);
     }
 

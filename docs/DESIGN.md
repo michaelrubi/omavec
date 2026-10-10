@@ -301,6 +301,12 @@ Variables, styles, assets and the thumbnail aren't written yet.
 - A `.omavecz` is the same folder zipped, for sending files to people and
   for opening from a file manager. Omavec opens and saves both; the folder
   is the one to keep in git.
+- Crash recovery never writes into the document: an unsaved one may have
+  no folder yet, and a folder in git shouldn't change behind its owner's
+  back. Each session keeps one `.omavecz` copy named after its process id
+  in `~/.local/state/omavec/recovery/`, with a note beside it of where the
+  document belongs. A copy whose process is gone is what a crash leaves;
+  the next session offers it back, as a document with unsaved changes.
 
 ### Import and export
 

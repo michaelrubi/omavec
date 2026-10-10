@@ -192,8 +192,17 @@ reopen and export.
   closing the window would throw them away. `.omavecz` is built in the
   engine (the same files zipped, the same bytes for the same document)
   with its MIME type and launcher entry; Save As takes a name ending in
-  `.omavecz`, and Open takes one, or the `document.json` in a folder. Left: assets, recent files, and
-  autosave and crash recovery.
+  `.omavecz`, and Open takes one, or the `document.json` in a folder.
+  File → Open Recent lists the last ten documents opened or saved
+  (`~/.config/omavec/recent.toml`). While a document has unsaved changes a
+  copy of it is written every thirty seconds, off the UI thread, to
+  `~/.local/state/omavec/recovery/`, and removed when the changes are
+  saved or given up; a copy still there at the next start, from a session
+  that is no longer running, is offered back (Recover, Discard, Not Now).
+  Left: assets, which wait for the first node that has one (images,
+  Phase 5).
+  Later: autosave into the document itself, as a setting; more than one
+  recovery copy offered at a time.
 - ~~Canvas: pan (Space/H/middle drag), zoom (Ctrl+wheel, Shift+0/1/2, pinch),
   pixel grid at high zoom, rulers.~~ (done) The wheel, middle drag,
   Space+drag and the Hand tool (H) pan; Ctrl+wheel and a pinch zoom about

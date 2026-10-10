@@ -6,6 +6,7 @@
 
 pub mod network;
 pub mod shapes;
+pub mod snap;
 pub mod stroke;
 
 pub use kurbo;

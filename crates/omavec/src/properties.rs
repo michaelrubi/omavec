@@ -2,7 +2,7 @@
 //! numbers that can be dragged or typed.
 
 use egui::{DragValue, Ui};
-use omavec_engine::{Align, Cap, Color, Error, Export, History, Join, Node, NodeId, NodeKind, Paint, PaintKind, Stop};
+use omavec_engine::{Align, Blend, Cap, Color, Error, Export, History, Join, Node, NodeId, NodeKind, Paint, PaintKind, Stop};
 
 use crate::commands::Command;
 use omavec_geom::kurbo::Affine;
@@ -421,6 +421,8 @@ impl Properties {
         let exported = node.exports.clone();
         let (values, fills, stroke) = (Field::ALL.map(|field| field.get(node)), node.fills.clone(), node.stroke.clone());
         let params: Vec<(Param, f64)> = Param::of(node).into_iter().map(|param| (param, param.get(node))).collect();
+        let blend = node.blend;
+        let mut mixed = blend;
         let (mut clip, mut clip_changed, line) = (if let NodeKind::Frame { clip } = node.kind { Some(clip) } else { None }, false, node.kind == NodeKind::Line);
         ui.label(&node.name);
         ui.add_space(4.0);
@@ -449,6 +451,11 @@ impl Properties {
                     set = Some((param, value));
                 }
             }
+            egui::ComboBox::from_id_salt("blend").selected_text(format!("{mixed:?}")).show_ui(ui, |ui| {
+                for blend in Blend::ALL {
+                    ui.selectable_value(&mut mixed, blend, format!("{blend:?}"));
+                }
+            });
             if let Some(mut clips) = clip
                 && ui.checkbox(&mut clips, "Clip content").changed()
             {
@@ -458,6 +465,9 @@ impl Properties {
         });
         if let Some((param, value)) = set {
             self.change(history, *id, "Shape", pointer_down, |node| param.set(node, value))?;
+        }
+        if mixed != blend {
+            self.change(history, *id, "Blend Mode", false, |node| node.blend = mixed)?;
         }
         if let (true, Some(clip)) = (clip_changed, clip) {
             self.change(history, *id, "Clip Content", false, |node| node.kind = NodeKind::Frame { clip })?;

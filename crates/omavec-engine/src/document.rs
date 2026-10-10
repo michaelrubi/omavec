@@ -9,7 +9,7 @@ use omavec_geom::shapes;
 use serde::{Deserialize, Serialize};
 
 use crate::export::Export;
-use crate::paint::{Color, Paint, Stroke, is_no, is_one, is_yes, one, yes};
+use crate::paint::{Blend, Color, Paint, Stroke, is_default, is_no, is_one, is_yes, one, yes};
 
 /// A node's identity, kept across saves so diffs stay small and instance
 /// overrides can name nodes inside components.
@@ -108,6 +108,8 @@ pub struct Node {
     pub locked: bool,
     #[serde(default = "one", skip_serializing_if = "is_one")]
     pub opacity: f64,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub blend: Blend,
     /// Where the node sits in its parent.
     #[serde(default, skip_serializing_if = "is_identity")]
     pub transform: Affine,
@@ -145,8 +147,9 @@ impl Node {
             return true;
         }
         // Spelled out so that a new field can't be forgotten here.
-        let Node { id, kind, name, visible, locked, opacity, transform, size, radii, fills, stroke, exports, children } = &**a;
-        (id, kind, name, visible, locked, opacity, transform, size, radii, fills, stroke, exports) == (&b.id, &b.kind, &b.name, &b.visible, &b.locked, &b.opacity, &b.transform, &b.size, &b.radii, &b.fills, &b.stroke, &b.exports)
+        let Node { id, kind, name, visible, locked, opacity, blend, transform, size, radii, fills, stroke, exports, children } = &**a;
+        (id, kind, name, visible, locked, opacity, blend) == (&b.id, &b.kind, &b.name, &b.visible, &b.locked, &b.opacity, &b.blend)
+            && (transform, size, radii, fills, stroke, exports) == (&b.transform, &b.size, &b.radii, &b.fills, &b.stroke, &b.exports)
             && children.len() == b.children.len()
             && children.iter().zip(&b.children).all(|(a, b)| Node::same(a, b))
     }
@@ -256,7 +259,7 @@ impl Document {
     pub fn create(&mut self, kind: NodeKind, size: Size) -> Node {
         let id = NodeId(self.next_id);
         self.next_id += 1;
-        Node { id, name: kind.label().into(), visible: true, locked: false, opacity: 1.0, transform: Affine::IDENTITY, size, radii: [0.0; 4], fills: kind.fills(), stroke: kind.stroke(), exports: Vec::new(), kind, children: Vec::new() }
+        Node { id, name: kind.label().into(), visible: true, locked: false, opacity: 1.0, blend: Blend::Normal, transform: Affine::IDENTITY, size, radii: [0.0; 4], fills: kind.fills(), stroke: kind.stroke(), exports: Vec::new(), kind, children: Vec::new() }
     }
 
     /// A copy of `node` and everything in it, with ids of their own.

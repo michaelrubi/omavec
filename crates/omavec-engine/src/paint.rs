@@ -75,6 +75,94 @@ impl PaintKind {
     }
 }
 
+/// How a node's colours mix with what is under it. Figma's list, in its
+/// order; the names in a file are CSS's for `mix-blend-mode`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Blend {
+    #[default]
+    Normal,
+    Darken,
+    Multiply,
+    ColorBurn,
+    Lighten,
+    Screen,
+    ColorDodge,
+    Overlay,
+    SoftLight,
+    HardLight,
+    Difference,
+    Exclusion,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
+}
+
+impl Blend {
+    pub const ALL: [Blend; 16] = [
+        Blend::Normal,
+        Blend::Darken,
+        Blend::Multiply,
+        Blend::ColorBurn,
+        Blend::Lighten,
+        Blend::Screen,
+        Blend::ColorDodge,
+        Blend::Overlay,
+        Blend::SoftLight,
+        Blend::HardLight,
+        Blend::Difference,
+        Blend::Exclusion,
+        Blend::Hue,
+        Blend::Saturation,
+        Blend::Color,
+        Blend::Luminosity,
+    ];
+
+    /// Its name in CSS and in a file.
+    pub fn css(self) -> &'static str {
+        match self {
+            Blend::Normal => "normal",
+            Blend::Darken => "darken",
+            Blend::Multiply => "multiply",
+            Blend::ColorBurn => "color-burn",
+            Blend::Lighten => "lighten",
+            Blend::Screen => "screen",
+            Blend::ColorDodge => "color-dodge",
+            Blend::Overlay => "overlay",
+            Blend::SoftLight => "soft-light",
+            Blend::HardLight => "hard-light",
+            Blend::Difference => "difference",
+            Blend::Exclusion => "exclusion",
+            Blend::Hue => "hue",
+            Blend::Saturation => "saturation",
+            Blend::Color => "color",
+            Blend::Luminosity => "luminosity",
+        }
+    }
+
+    pub(crate) fn mix(self) -> peniko::Mix {
+        match self {
+            Blend::Normal => peniko::Mix::Normal,
+            Blend::Darken => peniko::Mix::Darken,
+            Blend::Multiply => peniko::Mix::Multiply,
+            Blend::ColorBurn => peniko::Mix::ColorBurn,
+            Blend::Lighten => peniko::Mix::Lighten,
+            Blend::Screen => peniko::Mix::Screen,
+            Blend::ColorDodge => peniko::Mix::ColorDodge,
+            Blend::Overlay => peniko::Mix::Overlay,
+            Blend::SoftLight => peniko::Mix::SoftLight,
+            Blend::HardLight => peniko::Mix::HardLight,
+            Blend::Difference => peniko::Mix::Difference,
+            Blend::Exclusion => peniko::Mix::Exclusion,
+            Blend::Hue => peniko::Mix::Hue,
+            Blend::Saturation => peniko::Mix::Saturation,
+            Blend::Color => peniko::Mix::Color,
+            Blend::Luminosity => peniko::Mix::Luminosity,
+        }
+    }
+}
+
 /// One layer of a node's fill.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Paint {
@@ -109,7 +197,7 @@ pub struct Stroke {
     pub end_cap: Cap,
 }
 
-fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+pub(crate) fn is_default<T: Default + PartialEq>(value: &T) -> bool {
     *value == T::default()
 }
 

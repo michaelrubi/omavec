@@ -274,9 +274,11 @@ reopen and export.
   and opacity, laid out in the node's box, drawn by `vello_cpu` and
   written to SVG as `linearGradient` and `radialGradient`; the panel turns
   a colour into one and back, and has the stops and a linear one's angle.
-  Left: blend modes, angular and diamond gradients (SVG has neither), a
-  gradient's handles on the canvas, the eyedropper, dashes, and editing
-  several nodes at once.
+  A node has a blend mode, one of Figma's sixteen, drawn as a layer and
+  written to SVG as `mix-blend-mode`.
+  Left: a blend mode for each paint, angular and diamond gradients (SVG
+  has neither), a gradient's handles on the canvas, the eyedropper,
+  dashes, and editing several nodes at once.
   A node's opacity fades the whole of it as one layer, and a frame that
   clips hides what its children draw outside it, on the canvas and in
   exported PNG and SVG alike.

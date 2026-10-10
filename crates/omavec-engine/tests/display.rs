@@ -41,7 +41,7 @@ fn steps(document: &Document) -> String {
         Item::Fill(_) => 'f',
         Item::Clip(_) => '[',
         Item::Unclip => ']',
-        Item::Fade(_) => '(',
+        Item::Fade(..) => '(',
         Item::Unfade => ')',
     };
     DisplayList::of(&document.pages[0]).items.iter().map(letter).collect()
@@ -131,8 +131,8 @@ fn a_nodes_opacity_fades_all_of_it_together() {
     assert_eq!(steps(&document), "(ff)");
     let colours: Vec<[u8; 4]> = drawn(&document).into_iter().map(|(colour, _)| colour).collect();
     assert_eq!(colours, [rgba(BLUE, 255), rgba(RED, 128)]);
-    let Item::Fade(opacity) = DisplayList::of(&document.pages[0]).items[0] else { panic!() };
-    assert_eq!(opacity, 0.5);
+    let Item::Fade(opacity, mix) = DisplayList::of(&document.pages[0]).items[0] else { panic!() };
+    assert_eq!((opacity, mix), (0.5, peniko::Mix::Normal));
     // Two fills on one node fade together too.
     document.node_mut(rectangle).unwrap().fills.push(Paint::solid(BLUE));
     assert_eq!(steps(&document), "(f(ff))");

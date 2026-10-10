@@ -67,7 +67,7 @@ impl Renderer {
                 }
                 Item::Clip(path) => self.context.push_clip_path(path),
                 Item::Unclip => self.context.pop_clip(),
-                Item::Fade(opacity) => self.context.push_opacity_layer(*opacity),
+                Item::Fade(opacity, mix) => self.context.push_layer(None, Some(peniko::BlendMode::new(*mix, peniko::Compose::SrcOver)), Some(*opacity), None, None),
                 Item::Unfade => self.context.pop_layer(),
             }
         }

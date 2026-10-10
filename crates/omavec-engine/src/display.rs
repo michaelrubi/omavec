@@ -34,8 +34,9 @@ pub enum Item {
     Unclip,
     /// Until the `Unfade` that matches it, what is drawn is drawn together
     /// and then let through at this opacity, so where two things in it
-    /// overlap neither shows through the other.
-    Fade(f32),
+    /// overlap neither shows through the other, and mixed with what is
+    /// under it in this way.
+    Fade(f32, peniko::Mix),
     Unfade,
 }
 
@@ -70,10 +71,11 @@ impl DisplayList {
         // else can simply be that much fainter; anything more is drawn
         // together first.
         let paints = node.fills.iter().filter(|paint| paint.visible).count() + if stroked { node.stroke.paints.iter().filter(|paint| paint.visible).count() } else { 0 };
-        let together = node.opacity < 1.0 && (paints > 1 || !node.children.is_empty());
+        let blended = node.blend != crate::paint::Blend::Normal;
+        let together = blended || node.opacity < 1.0 && (paints > 1 || !node.children.is_empty());
         let opacity = if together { 1.0 } else { node.opacity };
         if together {
-            self.items.push(Item::Fade(node.opacity.clamp(0.0, 1.0) as f32));
+            self.items.push(Item::Fade(node.opacity.clamp(0.0, 1.0) as f32, node.blend.mix()));
         }
         let paint = |list: &mut Self, path: &BezPath, paints: &[crate::paint::Paint]| {
             let path = transform * path.clone();

@@ -708,9 +708,9 @@ impl App {
                 .show(ui, |ui| {
                     ui.strong("Layers");
                     ui.separator();
-                    let shown = self.layers.show(ui, &mut self.history, self.page, &mut self.tools.selection, &self.theme);
+                    // Scrolled, so a long list or a wide row never resizes the panel.
+                    let shown = egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| self.layers.show(ui, &mut self.history, self.page, &mut self.tools.selection, &self.theme)).inner;
                     self.check(shown);
-                    ui.take_available_space();
                 });
             egui::Panel::right("properties")
                 .frame(bar)
@@ -719,11 +719,10 @@ impl App {
                 .show(ui, |ui| {
                     ui.strong("Design");
                     ui.separator();
-                    match self.properties.show(ui, &mut self.history, &self.tools.selection) {
+                    match egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| self.properties.show(ui, &mut self.history, &self.tools.selection)).inner {
                         Ok(asked) => wanted = asked,
                         Err(error) => self.say(error.to_string(), true),
                     }
-                    ui.take_available_space();
                 });
         }
         if let Some(command) = wanted {

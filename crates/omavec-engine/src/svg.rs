@@ -6,7 +6,7 @@ use omavec_geom::kurbo::{Affine, BezPath, PathEl, Point};
 use omavec_geom::stroke::{Align, Cap, Join, outline};
 
 use crate::document::{Document, Error, Node, NodeId, NodeKind};
-use crate::paint::{Paint, PaintKind};
+use crate::paint::{Blend, Paint, PaintKind};
 
 /// One thing a node paints: a fill of its shape, or a layer of its stroke.
 #[derive(Clone, Copy)]
@@ -194,6 +194,12 @@ fn write_element(out: &mut String, indent: usize, node: &Node, transform: Option
     out.push_str("/>\n");
 }
 
+/// The attribute that says how `node` mixes with what is under it, if it
+/// isn't the usual way.
+fn blend(node: &Node) -> Option<String> {
+    (node.blend != Blend::Normal).then(|| format!(" style=\"mix-blend-mode:{}\"", node.blend.css()))
+}
+
 fn write_node(node: &Node, indent: usize, out: &mut String) {
     if !node.visible {
         return;
@@ -209,7 +215,8 @@ fn write_node(node: &Node, indent: usize, out: &mut String) {
             Some(format!("matrix({} {} {} {} {} {})", num(a), num(b), num(c), num(d), num(e), num(f)))
         };
         let opacity_attr = (node.opacity != 1.0).then(|| num(node.opacity));
-        let has_g = transform_attr.is_some() || opacity_attr.is_some();
+        let blend_attr = blend(node);
+        let has_g = transform_attr.is_some() || opacity_attr.is_some() || blend_attr.is_some();
         let child_indent = if has_g { indent + 2 } else { indent };
 
         let mut body = String::new();
@@ -224,6 +231,7 @@ fn write_node(node: &Node, indent: usize, out: &mut String) {
                 if let Some(op) = opacity_attr {
                     let _ = write!(out, " opacity=\"{op}\"");
                 }
+                out.push_str(&blend_attr.unwrap_or_default());
                 out.push_str(">\n");
                 out.push_str(&body);
                 let _ = writeln!(out, "{:indent$}</g>", "");
@@ -234,10 +242,13 @@ fn write_node(node: &Node, indent: usize, out: &mut String) {
     } else {
         // Fills, then the stroke over them.
         let painted: Vec<Piece<'_>> = pieces(node, false).chain(pieces(node, true)).collect();
-        // Several pieces under one opacity are grouped, so they fade as one.
-        let grouped = painted.len() > 1 && node.opacity != 1.0;
+        // Several pieces under one opacity are grouped, so they fade as one;
+        // so is whatever mixes with what is under it in its own way.
+        let blended = blend(node).filter(|_| !painted.is_empty());
+        let grouped = painted.len() > 1 && node.opacity != 1.0 || blended.is_some();
         if grouped {
-            let _ = writeln!(out, "{:indent$}<g opacity=\"{}\">", "", num(node.opacity));
+            let opacity = if node.opacity != 1.0 { format!(" opacity=\"{}\"", num(node.opacity)) } else { String::new() };
+            let _ = writeln!(out, "{:indent$}<g{opacity}{}>", "", blended.unwrap_or_default());
         }
         let inner = if grouped { indent + 2 } else { indent };
         for piece in painted {

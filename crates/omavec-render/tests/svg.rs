@@ -323,3 +323,35 @@ fn gradients_render_identically() {
 
     assert_svg_matches_render("gradients", &document, frame_id);
 }
+
+#[test]
+fn blend_modes_render_identically() {
+    use omavec_engine::Blend;
+    let mut document = Document::default();
+    let page = document.pages[0].id;
+    let mut frame = document.create(NodeKind::Frame { clip: true }, Size::new(360.0, 200.0));
+    frame.fills = vec![Paint::solid(Color::rgb(0xe9, 0xc4, 0x6a))];
+    let frame_id = frame.id;
+    document.insert(page, 0, frame).unwrap();
+    let mut add = |parent: NodeId, kind: NodeKind, at: (f64, f64), size: (f64, f64), color: Option<Color>, blend: Blend| {
+        let mut node = document.create(kind, Size::new(size.0, size.1));
+        (node.transform, node.blend) = (Affine::translate(at), blend);
+        node.fills = color.into_iter().map(Paint::solid).collect();
+        let id = node.id;
+        document.insert(parent, usize::MAX, node).unwrap();
+        id
+    };
+    // A dark bar for the modes to show against, half the height of each.
+    add(frame_id, NodeKind::Rectangle, (0.0, 100.0), (360.0, 100.0), Some(Color::rgb(0x1d, 0x35, 0x57)), Blend::Normal);
+    let modes = [Blend::Multiply, Blend::Screen, Blend::Overlay, Blend::Darken, Blend::Lighten, Blend::Difference, Blend::Exclusion, Blend::HardLight];
+    for (index, blend) in modes.into_iter().enumerate() {
+        add(frame_id, NodeKind::Ellipse, (10.0 + 43.0 * index as f64, 60.0), (40.0, 80.0), Some(Color::rgb(0xe6, 0x39, 0x46)), blend);
+    }
+    // A group that multiplies as one, half faded, holding two that overlap.
+    let group = add(frame_id, NodeKind::Group, (40.0, 10.0), (0.0, 0.0), None, Blend::Multiply);
+    add(group, NodeKind::Rectangle, (0.0, 0.0), (120.0, 40.0), Some(Color::rgb(0x2a, 0x9d, 0x8f)), Blend::Normal);
+    add(group, NodeKind::Rectangle, (80.0, 10.0), (120.0, 40.0), Some(Color::rgb(0x45, 0x7b, 0x9d)), Blend::Normal);
+    document.node_mut(group).unwrap().opacity = 0.5;
+
+    assert_svg_matches_render("blend_modes", &document, frame_id);
+}

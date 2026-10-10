@@ -229,7 +229,8 @@ engine document ──► display list ──► omavec-render ──► frame (
   `push_clip_path`. `Fade` … `Unfade` goes round a node whose opacity is
   below 1 and which draws more than one thing (two paints, or children),
   and becomes an opacity layer, so where its parts overlap neither shows
-  through the other. A node with one paint and nothing else is just that
+  through the other. The same layer carries the node's blend mode, and a
+  node with one is always drawn as a layer. A node with one paint and nothing else is just that
   much fainter, with no layer. SVG says the same things with `clip-path`
   and group `opacity`, and a test holds the two renderings together.
 - Headless export (CLI, tests) uses the same renderer on the calling

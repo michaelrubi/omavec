@@ -6,13 +6,13 @@ use omavec_engine::display::DisplayList;
 use omavec_engine::{Document, Error, History, NodeId, NodeKind, Stack, file};
 use omavec_geom::kurbo::{Point, Rect, Vec2};
 
-use crate::canvas::{Canvas, Pointer};
+use crate::canvas::{Canvas, Overlay, Pointer};
 use crate::clipboard::Clipboard;
 use crate::commands::Command;
 use crate::layers_panel::{self, LayersPanel};
 use crate::properties::Properties;
 use crate::theme::{self, Theme};
-use crate::tools::{Keys, Tool, Tools};
+use crate::tools::{Grab, Keys, Tool, Tools};
 
 /// The tools in the tool bar, with the command that picks each.
 const TOOLS: [(Tool, Command); 5] = [
@@ -448,6 +448,31 @@ impl App {
         nodes.iter().filter_map(corners).collect()
     }
 
+    /// The pointer to show at `at` on the canvas: what a press there would do.
+    /// `corners` are those of the selection's box, on the page.
+    fn cursor(&self, at: Point, corners: Option<[Point; 4]>) -> egui::CursorIcon {
+        use egui::CursorIcon;
+        let grab = match self.tools.tool {
+            Tool::Hand => return CursorIcon::Grab,
+            Tool::Move => self.tools.grab_at(self.history.document(), at),
+            _ => return CursorIcon::Crosshair,
+        };
+        match (grab, corners) {
+            (Some(Grab::Resize(handle)), Some([a, b, _, d])) => {
+                // Which way the handle pulls on screen, in eighths of a turn.
+                let pull = (b - a).normalize() * (handle.0 - 0.5) + (d - a).normalize() * (handle.1 - 0.5);
+                match (pull.atan2() / std::f64::consts::FRAC_PI_4).round().rem_euclid(4.0) as u8 {
+                    0 => CursorIcon::ResizeHorizontal,
+                    1 => CursorIcon::ResizeNwSe,
+                    2 => CursorIcon::ResizeVertical,
+                    _ => CursorIcon::ResizeNeSw,
+                }
+            }
+            (Some(Grab::Rotate), _) => CursorIcon::Alias,
+            _ => CursorIcon::Default,
+        }
+    }
+
     /// Lays out the window and returns the rectangle the canvas got.
     fn show(&mut self, ui: &mut Ui) -> egui::Rect {
         // Hand the canvas the document whenever it has changed.
@@ -492,10 +517,12 @@ impl App {
                     ui.take_available_space();
                 });
         }
-        let selected = self.corners(&self.tools.selection);
+        let document = self.history.document();
+        let handles = self.tools.frame(document).map(|(to_page, area)| [(area.x0, area.y0), (area.x1, area.y0), (area.x1, area.y1), (area.x0, area.y1)].map(|corner| to_page * Point::from(corner)));
+        let overlay = Overlay { outlines: self.corners(&self.tools.selection), handles, marquee: self.tools.marquee() };
         self.canvas.hand = self.tools.tool == Tool::Hand;
-        let (rect, pointer) = egui::CentralPanel::no_frame().show(ui, |ui| self.canvas.show(ui, &self.theme, &selected)).inner;
-        let keys = ui.input(|i| Keys { shift: i.modifiers.shift, alt: i.modifiers.alt });
+        let (rect, pointer) = egui::CentralPanel::no_frame().show(ui, |ui| self.canvas.show(ui, &self.theme, &overlay)).inner;
+        let keys = ui.input(|i| Keys { shift: i.modifiers.shift, alt: i.modifiers.alt, ctrl: i.modifiers.command });
         // A handle is taken from six points away, whatever the zoom.
         self.tools.grab = 6.0 / self.canvas.view.zoom;
         for event in pointer {
@@ -506,8 +533,15 @@ impl App {
                 }
                 Pointer::Drag(at) => self.tools.drag(&mut self.history, at, keys),
                 Pointer::Release => self.tools.release(&mut self.history),
+                Pointer::Double(at) => {
+                    self.tools.enter(&self.history, self.page, at);
+                    Ok(())
+                }
             };
             self.check(done);
+        }
+        if let Some(at) = self.canvas.hover {
+            ui.ctx().set_cursor_icon(self.cursor(at, handles));
         }
         rect
     }
@@ -761,6 +795,35 @@ mod tests {
             frame(&ctx, &mut app, key(letter, modifiers));
         }
         assert_eq!((app.history.revision(), &app.status), (before, &None));
+    }
+
+    #[test]
+    fn a_double_click_goes_into_a_group_and_a_drag_from_nothing_is_a_marquee() {
+        let (ctx, mut app, canvas) = app();
+        for (from, to) in [((10.0, 10.0), (50.0, 30.0)), ((300.0, 200.0), (340.0, 260.0))] {
+            frame(&ctx, &mut app, key(Key::R, Modifiers::NONE));
+            drag(&ctx, &mut app, canvas.min + vec2(from.0, from.1), canvas.min + vec2(to.0, to.1));
+        }
+        let [first, second] = app.history.document().node(app.page).unwrap().children.iter().map(|node| node.id).collect::<Vec<_>>()[..] else { panic!() };
+        // A marquee from the bare canvas over both.
+        drag(&ctx, &mut app, canvas.min + vec2(400.0, 300.0), canvas.min + vec2(5.0, 5.0));
+        assert_eq!(app.tools.selection, [first, second]);
+        assert_eq!(app.history.undo_name(), Some("Draw"), "selecting isn't an edit");
+        frame(&ctx, &mut app, key(Key::G, Modifiers::COMMAND));
+        let group = app.tools.selection[0];
+        // Ctrl is let go: with it held, a click goes straight to the deepest.
+        frame(&ctx, &mut app, vec![Event::ModifiersChanged(Modifiers::NONE)]);
+
+        // Two clicks in quick succession on the first rectangle.
+        let at = canvas.min + vec2(30.0, 20.0);
+        let button = |pressed| Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
+        frame(&ctx, &mut app, vec![Event::PointerMoved(at)]);
+        frame(&ctx, &mut app, vec![button(true)]);
+        frame(&ctx, &mut app, vec![button(false)]);
+        assert_eq!(app.tools.selection, [group]);
+        frame(&ctx, &mut app, vec![button(true)]);
+        frame(&ctx, &mut app, vec![button(false)]);
+        assert_eq!(app.tools.selection, [first]);
     }
 
     #[test]

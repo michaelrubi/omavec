@@ -109,6 +109,18 @@ Every visual node carries:
   Illustrator's Appearance panel in Figma's node tree. Flatten bakes the
   whole stack into a plain `Vector`.
 
+A group has no size of its own: its box is whatever holds its children
+(`Node::bounds`), so moving a child changes the group's box without a
+second edit to keep in step. Resizing a group, or several nodes at once,
+resizes each node in it (`Node::stretch`): a node keeps its angle, its
+middle moves, and its sides grow by as much as the stretch grows along
+each, so nothing is ever skewed and strokes keep their weight. What is in
+a frame stays put until Phase 5's constraints.
+
+Grouping, ungrouping, duplicating, restacking, copying and pasting
+(`omavec-engine/src/arrange.rs`) all leave every node where it was on the
+page; a property test does them in random order and checks.
+
 Coordinates are `f64` canvas units (kurbo's type), y down, as in Figma.
 Node ids stay stable across saves, which keeps git diffs small and lets
 instance overrides address nodes inside components by id path.
@@ -330,8 +342,11 @@ Figma's defaults, plus Illustrator's letters for the tools Figma lacks.
 | T | Text | H | Hand |
 | Shift+M | Shape Builder | C | Scissors |
 | Shift+C | Knife | Shift+W | Width tool |
-| I | Eyedropper | Enter | Edit vector / enter group |
-| Ctrl+G | Group | Ctrl+Alt+G | Frame selection |
+| I | Eyedropper | Enter / Shift+Enter | Select children (later: edit vector) / select parent |
+| Ctrl+G / Ctrl+Shift+G | Group / ungroup | Ctrl+Alt+G | Frame selection |
+| Ctrl+D | Duplicate | Ctrl+C / Ctrl+X / Ctrl+V | Copy / cut / paste |
+| ] / [ | Bring to front / send to back | Ctrl+] / Ctrl+[ | Bring forward / send backward |
+| Ctrl+A | Select all |  |  |
 | Shift+A | Add auto layout | Ctrl+Alt+K | Create component |
 | Ctrl+E | Flatten | Ctrl+Shift+O | Outline stroke |
 | Ctrl+Shift+H | Show/hide | Ctrl+Shift+L | Lock/unlock |
@@ -340,11 +355,28 @@ Figma's defaults, plus Illustrator's letters for the tools Figma lacks.
 | Ctrl+\ | Show/hide UI | Ctrl+Q | Quit |
 | Ctrl+Z / Ctrl+Shift+Z | Undo / redo | Delete, Backspace | Delete |
 | Ctrl+N / Ctrl+O | New / open | Ctrl+S / Ctrl+Shift+S | Save / save as |
-| Esc | Give up the drag, then the tool | Arrows / Shift+arrows | Nudge by 1 / 10 |
+| Esc | Give up the drag, then the tool, then the selection | Arrows / Shift+arrows | Nudge by 1 / 10 |
 | Shift+R | Rulers | Shift+' | Pixel grid |
 
 On the canvas: the wheel pans, Ctrl+wheel or a pinch zooms about the
 pointer, and middle drag or Space+drag pans.
+
+Selecting, with the Move tool: a click selects the deepest node under the
+pointer that is a child of the page, of a top-level frame, or of whatever
+holds something already selected; Ctrl+click selects the deepest there
+is, and a double click goes one deeper. Shift adds, or takes away on
+release. A drag from the bare page, or from the background of a top-level
+frame that has things in it, is a marquee: it selects what it touches of
+the page's children, and of a top-level frame's unless the frame is wholly
+inside it. The selection's box resizes from its corners and edges (Shift
+keeps proportions, Alt about the middle) and turns from just outside a
+corner (Shift by 15°). Dragging the selection moves it; Shift keeps the
+move on one axis and Alt moves a copy.
+
+Copy puts the nodes on Omavec's own clipboard and offers them to other
+apps as `image/svg+xml` through `wl-copy`. Paste takes only Omavec's own:
+into the selected frame or group, or beside the selection, or onto the
+page, where the nodes were on the page when copied.
 
 ## Open-source references
 

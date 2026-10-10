@@ -198,6 +198,41 @@ fn the_area_of_some_nodes_is_the_box_round_them_on_the_page() {
     assert_eq!(document.area(&[group]), Some(Rect::new(60.0, 120.0, 300.0, 220.0)));
 }
 
+#[test]
+fn stretching_resizes_nodes_and_never_skews_them() {
+    let Scene { mut document, frame, one, two, ellipse, .. } = scene();
+    // Twice as wide about x = 500: the ellipse at 500..560 becomes 500..620.
+    let wider = Affine::translate((500.0, 0.0)) * Affine::scale_non_uniform(2.0, 1.0) * Affine::translate((-500.0, 0.0));
+    document.node_mut(ellipse).unwrap().stretch(wider);
+    let node = document.node(ellipse).unwrap();
+    assert_eq!((node.transform, node.size), (Affine::translate((500.0, 50.0)), Size::new(120.0, 60.0)));
+
+    // A group passes it on to what is in it; a frame's children stay.
+    let group = document.group(&[one, two], NodeKind::Group).unwrap();
+    assert_eq!(document.node(group).unwrap().bounds(), Rect::new(0.0, 0.0, 190.0, 100.0));
+    let half = Affine::translate((10.0, 20.0)) * Affine::scale(0.5) * Affine::translate((-10.0, -20.0));
+    document.node_mut(group).unwrap().stretch(half);
+    assert_eq!(document.node(group).unwrap().bounds(), Rect::new(0.0, 0.0, 95.0, 50.0));
+    assert_eq!(document.node(one).unwrap().size, Size::new(25.0, 20.0));
+    assert_eq!(document.node(two).unwrap().transform, Affine::translate((55.0, 35.0)));
+    let before = document.node(two).unwrap().clone();
+    document.node_mut(frame).unwrap().stretch(Affine::scale(3.0));
+    assert_eq!(document.node(two).unwrap(), &before);
+
+    // The rotated frame, stretched sideways on the page, is still a
+    // rectangle at the same angle, with its middle where the stretch put it.
+    let was = document.node(frame).unwrap().clone();
+    let middle = was.transform * omavec_geom::kurbo::Point::new(450.0, 300.0);
+    document.node_mut(frame).unwrap().stretch(wider);
+    let is = document.node(frame).unwrap();
+    assert_eq!(is.transform.as_coeffs()[..4], was.transform.as_coeffs()[..4]);
+    let moved = is.transform * (is.size.to_vec2() / 2.0).to_point();
+    assert!((moved - wider * middle).hypot() < 1e-9);
+    // A side at 0.5 radians to a doubling in x: longer by hypot(2 cos, sin).
+    let grown = (2.0 * 0.5f64.cos()).hypot(0.5f64.sin());
+    assert!((is.size.width - 900.0 * grown).abs() < 1e-9, "{:?}", is.size);
+}
+
 #[derive(Clone, Debug)]
 enum Action {
     Group(Vec<usize>, bool),

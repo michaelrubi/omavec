@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use omavec_geom::kurbo::{Affine, Rect};
+use omavec_geom::kurbo::{Affine, Point, Rect, Size};
 
 use crate::document::{Document, Error, Node, NodeId, NodeKind};
 
@@ -14,6 +14,43 @@ pub enum Stack {
     Forward,
     Backward,
     Back,
+}
+
+impl Node {
+    /// Stretches the node by `by`, a scaling in its parent's coordinates,
+    /// as a resize and not a transform: it keeps its angle, its middle
+    /// moves, and its sides grow by as much as `by` stretches along each.
+    /// What is in a group is stretched one by one; what is in a frame stays
+    /// as it is.
+    pub fn stretch(&mut self, by: Affine) {
+        if self.kind == NodeKind::Group {
+            // A group that is squashed flat has no coordinates to scale in.
+            if self.transform.determinant() != 0.0 {
+                let inside = self.transform.inverse() * by * self.transform;
+                for child in &mut self.children {
+                    Arc::make_mut(child).stretch(inside);
+                }
+            }
+            return;
+        }
+        let [a, b, c, d, x, y] = self.transform.as_coeffs();
+        let [sx, skew_y, skew_x, sy, ..] = by.as_coeffs();
+        if (b, c, skew_y, skew_x) == (0.0, 0.0, 0.0, 0.0) {
+            // Upright, as most things are: scaled from its corner, which
+            // keeps round numbers round.
+            let corner = by * Point::new(x, y);
+            self.transform = Affine::new([a, 0.0, 0.0, d, corner.x, corner.y]);
+            self.size = Size::new(self.size.width * sx.abs(), self.size.height * sy.abs());
+            return;
+        }
+        // How much `by` stretches a step along one of the node's sides.
+        let along = |x: f64, y: f64| if (x, y) == (0.0, 0.0) { 1.0 } else { (sx * x + skew_x * y).hypot(skew_y * x + sy * y) / x.hypot(y) };
+        let middle = by * (self.transform * self.size.to_vec2().to_point().midpoint(Point::ZERO));
+        self.size = Size::new(self.size.width * along(a, b), self.size.height * along(c, d));
+        let turned = Affine::new([a, b, c, d, 0.0, 0.0]);
+        let corner = middle - (turned * self.size.to_vec2().to_point().midpoint(Point::ZERO)).to_vec2();
+        self.transform = Affine::translate(corner.to_vec2()) * turned;
+    }
 }
 
 impl Document {

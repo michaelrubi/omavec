@@ -108,6 +108,20 @@ pub enum Pointer {
     Press(Point),
     Drag(Point),
     Release,
+    /// A second click at the same place, after its own press and release.
+    Double(Point),
+}
+
+/// What the canvas draws over the document for the tools, in document
+/// coordinates.
+#[derive(Default)]
+pub struct Overlay {
+    /// The corners of each selected node's box.
+    pub outlines: Vec<[Point; 4]>,
+    /// The corners of the box the selection is resized and turned by.
+    pub handles: Option<[Point; 4]>,
+    /// The box being dragged out to select with.
+    pub marquee: Option<omavec_geom::kurbo::Rect>,
 }
 
 pub struct Canvas {
@@ -118,6 +132,8 @@ pub struct Canvas {
     pub readout: bool,
     /// The Hand tool is out: a plain drag pans, as Space+drag always does.
     pub hand: bool,
+    /// Where the pointer is over the canvas, in document coordinates.
+    pub hover: Option<Point>,
     list: Arc<DisplayList>,
     /// Counts the lists drawn, so a new one is asked for even in the same view.
     generation: u64,
@@ -136,7 +152,7 @@ pub struct Canvas {
 impl Canvas {
     pub fn new(list: DisplayList, centre: Option<Point>) -> Self {
         let (requests, frames) = worker();
-        Self { view: View::default(), rulers: false, pixel_grid: true, readout: false, hand: false, list: Arc::new(list), generation: 0, requests, frames, asked: None, shown: None, size: Vec2::ZERO, centre }
+        Self { view: View::default(), rulers: false, pixel_grid: true, readout: false, hand: false, hover: None, list: Arc::new(list), generation: 0, requests, frames, asked: None, shown: None, size: Vec2::ZERO, centre }
     }
 
     /// Draws `list` from now on.
@@ -162,10 +178,9 @@ impl Canvas {
     }
 
     /// Lays the canvas out in what's left of `ui`, handles panning and
-    /// zooming, and outlines each of `selected` (the corners of a node's box,
-    /// in document coordinates). Returns the rectangle it got and what the
-    /// pointer did for the tools.
-    pub fn show(&mut self, ui: &mut Ui, theme: &Theme, selected: &[[Point; 4]]) -> (Rect, Vec<Pointer>) {
+    /// zooming, and draws `overlay` on top. Returns the rectangle it got and
+    /// what the pointer did for the tools.
+    pub fn show(&mut self, ui: &mut Ui, theme: &Theme, overlay: &Overlay) -> (Rect, Vec<Pointer>) {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         let from_corner = |p: Pos2| Vec2::new(f64::from(p.x - rect.min.x), f64::from(p.y - rect.min.y));
         let to_screen = |v: Vec2| Pos2::new(rect.min.x + v.x as f32, rect.min.y + v.y as f32);
@@ -201,12 +216,16 @@ impl Canvas {
                 && let Some(at) = at
             {
                 pointer.extend([Pointer::Press(document(at)), Pointer::Release]);
+                if response.double_clicked_by(PointerButton::Primary) {
+                    pointer.push(Pointer::Double(document(at)));
+                }
             }
         }
         // Released even if Space went down on the way, so no drag is left open.
         if response.drag_stopped_by(PointerButton::Primary) {
             pointer.push(Pointer::Release);
         }
+        self.hover = response.hover_pos().map(document);
         if let Some(pointer) = response.hover_pos() {
             let (zoom, scroll) = ui.input(|i| (i.zoom_delta(), i.smooth_scroll_delta()));
             if zoom != 1.0 {
@@ -255,15 +274,23 @@ impl Canvas {
             painter.image(texture.id(), place, uv, Color32::WHITE);
         }
         let outline = egui::Stroke::new(1.5, theme.accent);
-        for corners in selected {
-            let corners = corners.map(|corner| to_screen(self.view.origin + corner.to_vec2() * self.view.zoom));
-            painter.add(egui::Shape::closed_line(corners.to_vec(), outline));
-            // One node alone shows the corners it can be resized by.
-            if selected.len() == 1 {
-                for corner in corners {
-                    painter.rect(Rect::from_center_size(corner, egui::vec2(7.0, 7.0)), 0.0, Color32::WHITE, outline, egui::StrokeKind::Inside);
-                }
+        let on_screen = |point: Point| to_screen(self.view.origin + point.to_vec2() * self.view.zoom);
+        for corners in &overlay.outlines {
+            painter.add(egui::Shape::closed_line(corners.map(on_screen).to_vec(), outline));
+        }
+        if let Some(corners) = overlay.handles {
+            let corners = corners.map(on_screen);
+            // One node's box is its outline, drawn already.
+            if overlay.outlines.len() != 1 {
+                painter.add(egui::Shape::closed_line(corners.to_vec(), outline));
             }
+            for corner in corners {
+                painter.rect(Rect::from_center_size(corner, egui::vec2(7.0, 7.0)), 0.0, Color32::WHITE, outline, egui::StrokeKind::Inside);
+            }
+        }
+        if let Some(marquee) = overlay.marquee {
+            let area = Rect::from_two_pos(on_screen(marquee.origin()), on_screen(Point::new(marquee.x1, marquee.y1)));
+            painter.rect(area, 0.0, theme.accent.gamma_multiply(0.15), egui::Stroke::new(1.0, theme.accent), egui::StrokeKind::Inside);
         }
         rulers::paint(&painter, rect, self.view, theme, self.rulers, self.pixel_grid);
         if let Some((_, _, took)) = &self.shown
@@ -347,7 +374,7 @@ mod tests {
             let (canvas, pointer) = (&mut self.canvas, &mut self.pointer);
             let mut rect = Rect::NOTHING;
             let mut output = self.ctx.run_ui(input, |ui| {
-                let shown = egui::CentralPanel::no_frame().show(ui, |ui| canvas.show(ui, &Theme::default(), &[])).inner;
+                let shown = egui::CentralPanel::no_frame().show(ui, |ui| canvas.show(ui, &Theme::default(), &Overlay::default())).inner;
                 rect = shown.0;
                 pointer.extend(shown.1);
             });

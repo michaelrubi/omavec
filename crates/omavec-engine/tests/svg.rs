@@ -83,8 +83,10 @@ fn spec_document_matches_exact_svg() {
 #[test]
 fn export_group_by_id_sizes_to_group_without_parent_transform_or_opacity() {
     let (document, _, group_id) = build_spec_document();
+    // A group is as big as what is in it, hidden or not, whatever size it
+    // was made with: 0..50.5 by 0..20.25.
     let expected = "\
-<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"60\" height=\"40\" viewBox=\"0 0 60 40\">
+<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"50.5\" height=\"20.25\" viewBox=\"0 0 50.5 20.25\">
   <rect width=\"20\" height=\"20\" fill=\"#0000ff\"/>
 </svg>
 ";

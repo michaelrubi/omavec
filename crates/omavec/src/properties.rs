@@ -2,8 +2,8 @@
 //! numbers that can be dragged or typed.
 
 use egui::{DragValue, Ui};
-use omavec_engine::{Align, Color, Error, History, Node, NodeId, Paint, PaintKind};
-use omavec_geom::kurbo::{Affine, Point};
+use omavec_engine::{Align, Color, Error, History, Node, NodeId, NodeKind, Paint, PaintKind};
+use omavec_geom::kurbo::Affine;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Field {
@@ -36,31 +36,43 @@ impl Field {
         }
     }
 
-    /// X and Y are where the node's own corner sits in its parent. Rotation
-    /// is in degrees, anticlockwise on screen, as Figma shows it.
+    /// X and Y are where the corner of the node's box sits in its parent.
+    /// Rotation is in degrees, anticlockwise on screen, as Figma shows it.
     fn get(self, node: &Node) -> f64 {
-        let [a, b, _, _, x, y] = node.transform.as_coeffs();
+        let [a, b, ..] = node.transform.as_coeffs();
+        let (area, corner) = (node.bounds(), node.transform * node.bounds().origin());
         match self {
-            Field::X => x,
-            Field::Y => y,
-            Field::Width => node.size.width,
-            Field::Height => node.size.height,
+            Field::X => corner.x,
+            Field::Y => corner.y,
+            Field::Width => area.width(),
+            Field::Height => area.height(),
             // Adding zero turns the -0.0 of an unrotated node into 0.0.
             Field::Rotation => -b.atan2(a).to_degrees() + 0.0,
         }
     }
 
     fn set(self, node: &mut Node, value: f64) {
-        let [a, b, c, d, x, y] = node.transform.as_coeffs();
+        let (area, was) = (node.bounds(), self.get(node));
         match self {
-            Field::X => node.transform = Affine::new([a, b, c, d, value, y]),
-            Field::Y => node.transform = Affine::new([a, b, c, d, x, value]),
+            Field::X => node.transform = Affine::translate((value - was, 0.0)) * node.transform,
+            Field::Y => node.transform = Affine::translate((0.0, value - was)) * node.transform,
+            // A group has no size of its own: what is in it is resized,
+            // from the corner of its box.
+            Field::Width | Field::Height if node.kind == NodeKind::Group => {
+                let factor = if was > 0.0 { value.max(0.0) / was } else { 1.0 };
+                let scale = if self == Field::Width { Affine::scale_non_uniform(factor, 1.0) } else { Affine::scale_non_uniform(1.0, factor) };
+                let corner = area.origin().to_vec2();
+                let within = Affine::translate(corner) * scale * Affine::translate(-corner);
+                if node.transform.determinant() != 0.0 {
+                    node.stretch(node.transform * within * node.transform.inverse());
+                }
+            }
             Field::Width => node.size.width = value.max(0.0),
             Field::Height => node.size.height = value.max(0.0),
             Field::Rotation => {
-                // About the node's middle, which stays where it is. (This
-                // drops any scale or skew; nothing makes those yet.)
-                let middle = Point::new(node.size.width / 2.0, node.size.height / 2.0);
+                // About the middle of the node's box, which stays where it
+                // is. (This drops any scale or skew; nothing makes those yet.)
+                let middle = area.center();
                 let stays = node.transform * middle;
                 node.transform = Affine::translate(stays.to_vec2()) * Affine::rotate(-value.to_radians()) * Affine::translate(-middle.to_vec2());
             }
@@ -231,7 +243,7 @@ impl Properties {
 mod tests {
     use super::*;
     use omavec_engine::{Document, NodeKind};
-    use omavec_geom::kurbo::Size;
+    use omavec_geom::kurbo::{Point, Size};
 
     /// A 200 × 100 rectangle at (30, 40) on the page.
     fn rectangle() -> (History, NodeId) {
@@ -264,6 +276,34 @@ mod tests {
         // A size can't go below nothing.
         type_in(&mut history, id, Field::Width, -10.0);
         assert_eq!(values(&history, id)[2], 0.0);
+    }
+
+    #[test]
+    fn a_groups_fields_are_those_of_the_box_round_what_is_in_it() {
+        let (mut history, id) = rectangle();
+        let group = history
+            .edit("Group", |document| {
+                let page = document.pages[0].id;
+                let mut other = document.create(NodeKind::Ellipse, Size::new(50.0, 50.0));
+                other.transform = Affine::translate((280.0, 190.0));
+                let other = (other.id, document.insert(page, usize::MAX, other)?).0;
+                let group = document.group(&[id, other], NodeKind::Group)?;
+                // The rectangle leaves the group's corner behind it.
+                document.node_mut(id)?.transform = Affine::translate((-20.0, 0.0));
+                Ok(group)
+            })
+            .unwrap();
+        assert_eq!(values(&history, group), [10.0, 40.0, 320.0, 200.0, 0.0]);
+        type_in(&mut history, group, Field::X, 100.0);
+        type_in(&mut history, group, Field::Width, 160.0);
+        type_in(&mut history, group, Field::Height, 400.0);
+        assert_eq!(values(&history, group), [100.0, 40.0, 160.0, 400.0, 0.0]);
+        // The rectangle is half as wide and twice as high, still at the corner.
+        assert_eq!(values(&history, id), [-20.0, 0.0, 100.0, 200.0, 0.0]);
+        let middle = Point::new(180.0, 240.0);
+        type_in(&mut history, group, Field::Rotation, 90.0);
+        let node = history.document().node(group).unwrap();
+        assert!((node.transform * node.bounds().center() - middle).hypot() < 1e-9, "the middle moved");
     }
 
     #[test]

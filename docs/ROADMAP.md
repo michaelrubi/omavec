@@ -202,11 +202,17 @@ reopen and export.
   from 400% (Shift+' toggles it) and Shift+R shows rulers.
   Later: the pointer's position marked on the rulers; guides dragged out
   of them.
-- Selection: click, Shift+click, marquee, deep select (Ctrl+click), select
-  in group (double-click / Enter), Esc to parent. Built so far: click
-  (the page's child, or what is inside a top-level frame), Shift+click to
-  add or take away, a click on nothing to clear, and an outline round
-  what is selected. Hidden and locked nodes can't be clicked.
+- ~~Selection: click, Shift+click, marquee, deep select (Ctrl+click), select
+  in group (double-click / Enter), Esc to parent.~~ (done) A click selects
+  the page's child, what is in a top-level frame, or what is beside the
+  selection; Ctrl+click the deepest node there; a double click one deeper.
+  Shift adds or takes away. A drag from nothing, or from the background of
+  a top-level frame with things in it, is a marquee. Enter selects the
+  children, Shift+Enter the parent and Ctrl+A everything alongside; Esc
+  clears the selection, as in Figma, rather than going to the parent.
+  Hidden and locked nodes can't be clicked.
+  Later: a marquee tests boxes, so it catches a turned node by the box
+  round it.
 - ~~Tools as in `vectorcraft-tools`: pointer events in, Begin/Preview/Commit
   actions out, so every drag is one undo step and every tool is testable
   without a window.~~ (done) `crates/omavec/src/tools.rs` takes presses,
@@ -215,14 +221,19 @@ reopen and export.
 - Transform: move, resize and rotate handles; Shift/Alt modifiers; nudge
   with arrows (Shift: 10); numeric X/Y/W/H/rotation in the properties panel.
   Built so far: dragging the selection moves it, as one undo step, also
-  inside rotated or scaled frames; Esc puts it back; Delete removes it.
-  One selected node resizes by its corners and anywhere along its edges,
-  along its own sides if it is rotated, with Shift keeping proportions and
-  Alt resizing about the middle. Arrows nudge by 1, or 10 with Shift. The
-  Design panel has X, Y, W, H and rotation to drag or type; rotation is
-  about the middle, anticlockwise as in Figma. Left: rotate handles,
-  resizing several nodes at once, resize cursors, Shift to keep a move on
-  one axis, and children that follow their frame (constraints, Phase 5).
+  inside rotated or scaled frames, along one axis with Shift, and as a copy
+  with Alt; Esc puts it back; Delete removes it. The selection's box
+  resizes by its corners and anywhere along its edges, with Shift keeping
+  proportions and Alt resizing about the middle: one node along its own
+  sides if it is turned, and several nodes or a group together, each kept
+  at its angle. The space just outside a corner turns the selection about
+  its middle, by 15° at a time with Shift. The pointer shows which it would
+  do. Arrows nudge by 1, or 10 with Shift. The Design panel has X, Y, W, H
+  and rotation to drag or type, for a group too; rotation is about the
+  middle, anticlockwise as in Figma. Left: children that follow their
+  frame (constraints, Phase 5).
+  Later: a pointer of its own for turning (egui has none; it shows the
+  alias arrow).
 - Tools: Frame (artboards = top-level frames, with Figma's device presets),
   Rectangle (per-corner radii), Ellipse (arc/ratio), Polygon, Star, Line,
   Arrow. Built so far: Frame (F), Rectangle (R) and Ellipse (O) by
@@ -252,8 +263,13 @@ reopen and export.
   by Ctrl+Shift+H / Ctrl+Shift+L); reordering by drag and the rest of the
   properties panel are left.
 - Smart guides and snapping: edges, centres, equal spacing, pixel grid.
-- Group (Ctrl+G), frame selection (Ctrl+Alt+G), duplicate (Ctrl+D,
-  Alt+drag), copy/paste within Omavec and as SVG to the Wayland clipboard.
+- ~~Group (Ctrl+G), frame selection (Ctrl+Alt+G), duplicate (Ctrl+D,
+  Alt+drag), copy/paste within Omavec and as SVG to the Wayland clipboard.~~
+  (done) Also ungroup (Ctrl+Shift+G), cut, and bring forward, send
+  backward, to front and to back (Ctrl+], Ctrl+[, ], [). A frame made from
+  the selection has no fill and doesn't clip, so nothing looks different.
+  Later: pasting SVG copied in another app (Phase 2's importer), and
+  between two Omavec windows.
 - Export: per-node export settings (SVG, PNG @1x/@2x/@3x); `omavec export`
   CLI; `vello_cpu` for headless PNG. `vectorcraft-svg`'s writer is the
   reference for the SVG side.

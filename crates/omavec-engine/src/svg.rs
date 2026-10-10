@@ -109,6 +109,30 @@ fn write_element(out: &mut String, indent: usize, node: &Node, transform: Option
         Piece::Fill(paint) | Piece::Stroke(paint) => (paint, None),
     };
     let path = outlined.clone().or_else(|| node.shape().filter(|_| !is_plain(node)));
+    // A gradient is defined just before what it paints, and named after it.
+    let gradient = paint.kind.stops().map(|stops| {
+        let (letter, paints) = if matches!(piece, Piece::Fill(_)) { ('f', &node.fills) } else { ('s', &node.stroke.paints) };
+        let id = format!("paint{}{letter}{}", node.id.0, paints.iter().position(|other| std::ptr::eq(other, paint)).unwrap_or(0));
+        // It is laid out in the node's box, a unit square: stretch that to
+        // the box, and move it to where a plain element's x and y put it.
+        let moved = translation.filter(|by| path.is_none() && (num(by.x) != "0" || num(by.y) != "0")).map(|by| format!("translate({} {}) ", num(by.x), num(by.y))).unwrap_or_default();
+        let placed = format!("gradientUnits=\"userSpaceOnUse\" gradientTransform=\"{moved}scale({} {})\"", num(node.size.width), num(node.size.height));
+        let (tag, line) = match paint.kind {
+            PaintKind::Radial { from, to, .. } => ("radialGradient", format!("cx=\"{}\" cy=\"{}\" r=\"{}\"", num(from.0), num(from.1), num((to.0 - from.0).hypot(to.1 - from.1)))),
+            PaintKind::Linear { from, to, .. } => ("linearGradient", format!("x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"", num(from.0), num(from.1), num(to.0), num(to.1))),
+            PaintKind::Solid { .. } => ("linearGradient", String::new()),
+        };
+        let _ = writeln!(out, "{:indent$}<{tag} id=\"{id}\" {line} {placed}>", "");
+        for stop in stops {
+            let _ = write!(out, "{:indent$}  <stop offset=\"{}\" stop-color=\"{}\"", "", num(stop.at.clamp(0.0, 1.0)), String::from(stop.color));
+            if stop.opacity != 1.0 {
+                let _ = write!(out, " stop-opacity=\"{}\"", num(stop.opacity));
+            }
+            out.push_str("/>\n");
+        }
+        let _ = writeln!(out, "{:indent$}</{tag}>", "");
+        format!("url(#{id})")
+    });
     if let Some(path) = &path {
         let _ = write!(out, "{:indent$}<path d=\"{}\"", "", path_data(path));
         if let Some(by) = translation.filter(|by| num(by.x) != "0" || num(by.y) != "0") {
@@ -134,8 +158,7 @@ fn write_element(out: &mut String, indent: usize, node: &Node, transform: Option
         let _ = write!(out, " transform=\"matrix({} {} {} {} {} {})\"", num(a), num(b), num(c), num(d), num(e), num(f));
     }
 
-    let PaintKind::Solid { color } = paint.kind;
-    let color = String::from(color);
+    let color = gradient.unwrap_or_else(|| String::from(paint.kind.color()));
     let painted = match piece {
         Piece::Stroke(_) if outlined.is_none() => {
             let _ = write!(out, " fill=\"none\" stroke=\"{color}\" stroke-width=\"{}\"", num(node.stroke.weight));

@@ -270,7 +270,12 @@ reopen and export.
   A stroke also has a join (mitre, bevel, round) and, on a line, a cap
   for each end: none, round, square, an open arrowhead or a filled one.
   The panel has the node's own opacity too.
-  Left: blend modes, gradients, the eyedropper, dashes, and editing
+  A paint can be a linear or a radial gradient: stops of colour, place
+  and opacity, laid out in the node's box, drawn by `vello_cpu` and
+  written to SVG as `linearGradient` and `radialGradient`; the panel turns
+  a colour into one and back, and has the stops and a linear one's angle.
+  Left: blend modes, angular and diamond gradients (SVG has neither), a
+  gradient's handles on the canvas, the eyedropper, dashes, and editing
   several nodes at once.
   A node's opacity fades the whole of it as one layer, and a frame that
   clips hides what its children draw outside it, on the canvas and in

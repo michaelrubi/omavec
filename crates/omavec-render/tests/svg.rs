@@ -288,3 +288,38 @@ fn every_kind_of_shape_renders_identically() {
 
     assert_svg_matches_render("every_kind_of_shape", &document, frame_id);
 }
+
+#[test]
+fn gradients_render_identically() {
+    use omavec_engine::{Align, PaintKind, Stop, Stroke};
+    let mut document = Document::default();
+    let page = document.pages[0].id;
+    let frame = document.create(NodeKind::Frame { clip: true }, Size::new(360.0, 240.0));
+    let frame_id = frame.id;
+    document.insert(page, 0, frame).unwrap();
+    let stop = |at: f64, color: Color, opacity: f64| Stop { at, color, opacity };
+    let (red, blue, gold) = (Color::rgb(0xe6, 0x39, 0x46), Color::rgb(0x1d, 0x35, 0x57), Color::rgb(0xe9, 0xc4, 0x6a));
+    let mut add = |kind: NodeKind, transform: Affine, size: (f64, f64), paint: PaintKind| {
+        let mut node = document.create(kind, Size::new(size.0, size.1));
+        node.transform = transform;
+        node.fills = vec![Paint { kind: paint, opacity: 1.0, visible: true }];
+        let id = node.id;
+        document.insert(frame_id, usize::MAX, node).unwrap();
+        id
+    };
+    let at = |x: f64, y: f64| Affine::translate((x, y));
+    // Corner to corner on a plain rectangle, with a stop in between.
+    add(NodeKind::Rectangle, at(20.0, 20.0), (140.0, 80.0), PaintKind::Linear { from: (0.0, 0.0), to: (1.0, 1.0), stops: vec![stop(0.0, red, 1.0), stop(0.4, gold, 1.0), stop(1.0, blue, 1.0)] });
+    // From the middle of a wide ellipse: as wide and as high as its box.
+    add(NodeKind::Ellipse, at(190.0, 20.0), (150.0, 80.0), PaintKind::Radial { from: (0.5, 0.5), to: (1.0, 0.5), stops: vec![stop(0.0, gold, 1.0), stop(1.0, red, 1.0)] });
+    // On a turned star, which is a path: fading out, over the frame.
+    add(NodeKind::Star { points: 5, ratio: 0.5 }, at(60.0, 120.0) * Affine::rotate(0.3), (110.0, 100.0), PaintKind::Linear { from: (0.5, 0.0), to: (0.5, 1.0), stops: vec![stop(0.0, blue, 1.0), stop(1.0, blue, 0.0)] });
+    // Off-centre in a rounded rectangle, with a gradient for a stroke too.
+    let card = add(NodeKind::Rectangle, at(200.0, 125.0), (140.0, 95.0), PaintKind::Radial { from: (0.25, 0.3), to: (0.9, 0.3), stops: vec![stop(0.0, red, 1.0), stop(0.5, gold, 0.5), stop(1.0, blue, 1.0)] });
+    let node = document.node_mut(card).unwrap();
+    node.radii = [18.0; 4];
+    let across = PaintKind::Linear { from: (0.0, 0.5), to: (1.0, 0.5), stops: vec![stop(0.0, blue, 1.0), stop(1.0, red, 1.0)] };
+    node.stroke = Stroke { paints: vec![Paint { kind: across, opacity: 1.0, visible: true }], weight: 8.0, align: Align::Center, ..Default::default() };
+
+    assert_svg_matches_render("gradients", &document, frame_id);
+}

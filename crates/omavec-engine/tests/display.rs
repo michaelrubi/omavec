@@ -25,7 +25,8 @@ fn rgba(color: Color, alpha: u8) -> [u8; 4] {
 fn drawn(document: &Document) -> Vec<([u8; 4], Rect)> {
     let fill = |item: &Item| match item {
         Item::Fill(fill) => {
-            let c = fill.color.to_rgba8();
+            let peniko::Brush::Solid(color) = &fill.brush else { panic!("not one colour") };
+            let c = color.to_rgba8();
             Some(([c.r, c.g, c.b, c.a], fill.bounds()))
         }
         _ => None,
@@ -264,4 +265,30 @@ fn a_line_is_its_stroke_and_new_kinds_are_saved_by_name() {
     star.transform = Affine::translate((200.0, 0.0));
     document.insert(page, 1, star).unwrap();
     assert!(hit(&document, 250.0, 50.0) && hit(&document, 250.0, 5.0) && !hit(&document, 215.0, 10.0));
+}
+
+#[test]
+fn a_gradient_is_laid_out_in_its_nodes_box_and_saved_as_its_stops() {
+    use omavec_engine::{PaintKind, Stop};
+    let mut document = Document::default();
+    let page = document.pages[0].id;
+    let id = add(&mut document, page, NodeKind::Rectangle, (10.0, 20.0), (200.0, 100.0), RED);
+    // Stops out of order in the file are drawn in order.
+    let stops = vec![Stop { at: 1.0, color: BLUE, opacity: 0.5 }, Stop { at: 0.0, color: RED, opacity: 1.0 }];
+    let node = document.node_mut(id).unwrap();
+    node.fills[0].kind = PaintKind::Linear { from: (0.0, 0.5), to: (1.0, 0.5), stops };
+    node.fills[0].opacity = 0.5;
+    let list = DisplayList::of(&document.pages[0]);
+    let [Item::Fill(fill)] = &list.items[..] else { panic!() };
+    let peniko::Brush::Gradient(gradient) = &fill.brush else { panic!("not a gradient") };
+    let drawn: Vec<(f32, [u8; 4])> = gradient.stops.iter().map(|stop| (stop.offset, stop.color.to_alpha_color::<peniko::color::Srgb>().to_rgba8().to_u8_array())).collect();
+    assert_eq!(drawn, [(0.0, [255, 0, 0, 128]), (1.0, [0, 0, 255, 64])]);
+    // A unit square stretched over the node: its corner to (10, 20), and
+    // (1, 1) to the far corner.
+    assert_eq!(fill.transform * omavec_geom::kurbo::Point::new(1.0, 1.0), (210.0, 120.0).into());
+    assert_eq!(fill.transform * omavec_geom::kurbo::Point::ZERO, (10.0, 20.0).into());
+
+    let text = serde_json::to_string(&document.node(id).unwrap().fills[0]).unwrap();
+    assert_eq!(text, r##"{"type":"linear","from":[0.0,0.5],"to":[1.0,0.5],"stops":[{"at":1.0,"color":"#0000ff","opacity":0.5},{"at":0.0,"color":"#ff0000"}],"opacity":0.5}"##);
+    assert_eq!(serde_json::from_str::<Paint>(&text).unwrap(), document.node(id).unwrap().fills[0]);
 }

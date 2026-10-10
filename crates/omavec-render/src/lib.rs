@@ -55,7 +55,13 @@ impl Renderer {
                     // vello_cpu keeps no scene between frames, so every path
                     // it's given is processed again: skip the ones off screen.
                     if !view.transform_rect_bbox(fill.bounds()).intersect(screen).is_zero_area() {
-                        self.context.set_paint(fill.color);
+                        match &fill.brush {
+                            peniko::Brush::Solid(color) => self.context.set_paint(*color),
+                            peniko::Brush::Gradient(gradient) => self.context.set_paint(gradient.clone()),
+                            // Nothing makes these yet.
+                            peniko::Brush::Image(_) => continue,
+                        }
+                        self.context.set_paint_transform(fill.transform);
                         self.context.fill_path(&fill.path);
                     }
                 }

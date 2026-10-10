@@ -2,7 +2,7 @@
 //! numbers that can be dragged or typed.
 
 use egui::{DragValue, Ui};
-use omavec_engine::{Align, Cap, Color, Error, Export, History, Join, Node, NodeId, NodeKind, Paint, PaintKind};
+use omavec_engine::{Align, Cap, Color, Error, Export, History, Join, Node, NodeId, NodeKind, Paint, PaintKind, Stop};
 
 use crate::commands::Command;
 use omavec_geom::kurbo::Affine;
@@ -170,9 +170,10 @@ impl Param {
 }
 
 /// A change to one of a stack of paints: a node's fills, or its stroke's.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum PaintEdit {
-    Color(usize, Color),
+    /// What the paint is: one colour, or a gradient and everything about it.
+    Kind(usize, PaintKind),
     Opacity(usize, f64),
     Visible(usize, bool),
     Remove(usize),
@@ -189,7 +190,7 @@ impl PaintEdit {
             }
         };
         match self {
-            PaintEdit::Color(index, color) => paint(paints, index, &|paint| paint.kind = PaintKind::Solid { color }),
+            PaintEdit::Kind(index, kind) => paint(paints, index, &|paint| paint.kind = kind.clone()),
             PaintEdit::Opacity(index, opacity) => paint(paints, index, &|paint| paint.opacity = opacity.clamp(0.0, 1.0)),
             PaintEdit::Visible(index, visible) => paint(paints, index, &|paint| paint.visible = visible),
             PaintEdit::Remove(index) if index < paints.len() => drop(paints.remove(index)),
@@ -199,14 +200,57 @@ impl PaintEdit {
     }
 
     /// Whether the widget that makes this edit is one that's dragged.
-    fn dragged(self) -> bool {
-        matches!(self, PaintEdit::Color(..) | PaintEdit::Opacity(..))
+    fn dragged(&self) -> bool {
+        matches!(self, PaintEdit::Kind(..) | PaintEdit::Opacity(..))
     }
 }
 
 /// Figma's grey for a new fill, and its black for a new stroke.
 const NEW_FILL: Color = Color::rgb(0xd9, 0xd9, 0xd9);
 const NEW_STROKE: Color = Color::rgb(0, 0, 0);
+
+/// The kinds of paint, as the drop-down names them.
+const KINDS: [&str; 3] = ["Solid", "Linear", "Radial"];
+
+fn kind_name(kind: &PaintKind) -> &'static str {
+    match kind {
+        PaintKind::Solid { .. } => KINDS[0],
+        PaintKind::Linear { .. } => KINDS[1],
+        PaintKind::Radial { .. } => KINDS[2],
+    }
+}
+
+/// `kind` as the kind of paint called `name`, with what colours it had: a
+/// gradient made from one colour fades it out, as Figma's does, and one
+/// colour made from a gradient is its first.
+fn converted(kind: &PaintKind, name: &str) -> PaintKind {
+    let fade = |color| vec![Stop { at: 0.0, color, opacity: 1.0 }, Stop { at: 1.0, color, opacity: 0.0 }];
+    let stops = kind.stops().unwrap_or_else(|| fade(kind.color()));
+    match name {
+        "Linear" => PaintKind::Linear { from: (0.5, 0.0), to: (0.5, 1.0), stops },
+        "Radial" => PaintKind::Radial { from: (0.5, 0.5), to: (1.0, 0.5), stops },
+        _ => PaintKind::Solid { color: kind.color() },
+    }
+}
+
+/// A linear gradient's angle in degrees, clockwise from pointing right, and
+/// the line through the middle of the box at an angle.
+fn angle_of(from: (f64, f64), to: (f64, f64)) -> f64 {
+    (to.1 - from.1).atan2(to.0 - from.0).to_degrees()
+}
+
+fn at_angle(degrees: f64) -> ((f64, f64), (f64, f64)) {
+    let (sin, cos) = degrees.to_radians().sin_cos();
+    ((0.5 - cos / 2.0, 0.5 - sin / 2.0), (0.5 + cos / 2.0, 0.5 + sin / 2.0))
+}
+
+/// A button that shows `color` and opens a picker for it.
+fn color_button(ui: &mut Ui, color: &mut Color) -> bool {
+    let mut rgb = [color.r, color.g, color.b];
+    let changed = ui.color_edit_button_srgb(&mut rgb).changed();
+    *color = Color::rgb(rgb[0], rgb[1], rgb[2]);
+    changed
+}
 
 /// A stack of paints under `title`, the top one first as in Figma, and the
 /// edit the user made to it this frame, if any.
@@ -220,13 +264,31 @@ fn paints(ui: &mut Ui, title: &str, paints: &[Paint]) -> Option<PaintEdit> {
         }
     });
     for (index, paint) in paints.iter().enumerate().rev() {
-        let PaintKind::Solid { color } = paint.kind;
-        ui.horizontal(|ui| {
-            let mut rgb = [color.r, color.g, color.b];
-            if ui.color_edit_button_srgb(&mut rgb).changed() {
-                edit = Some(PaintEdit::Color(index, Color::rgb(rgb[0], rgb[1], rgb[2])));
+        let mut kind = paint.kind.clone();
+        // Wrapped, so a long row takes a second line and not a wider panel.
+        ui.horizontal_wrapped(|ui| {
+            let mut name = kind_name(&kind);
+            egui::ComboBox::from_id_salt((title, index)).width(56.0).selected_text(name).show_ui(ui, |ui| {
+                for other in KINDS {
+                    ui.selectable_value(&mut name, other, other);
+                }
+            });
+            if name != kind_name(&kind) {
+                kind = converted(&kind, name);
             }
-            ui.monospace(String::from(color));
+            match &mut kind {
+                PaintKind::Solid { color } => {
+                    color_button(ui, color);
+                    ui.monospace(String::from(*color));
+                }
+                PaintKind::Linear { from, to, .. } => {
+                    let mut degrees = angle_of(*from, *to).round();
+                    if ui.add(DragValue::new(&mut degrees).suffix("°")).changed() {
+                        (*from, *to) = at_angle(degrees);
+                    }
+                }
+                PaintKind::Radial { .. } => {}
+            }
             let mut percent = (paint.opacity * 100.0).round();
             if ui.add(DragValue::new(&mut percent).range(0.0..=100.0).suffix("%")).changed() {
                 edit = Some(PaintEdit::Opacity(index, percent / 100.0));
@@ -239,6 +301,38 @@ fn paints(ui: &mut Ui, title: &str, paints: &[Paint]) -> Option<PaintEdit> {
                 edit = Some(PaintEdit::Remove(index));
             }
         });
+        // A gradient's stops, one to a row: colour, place along it, opacity.
+        if let PaintKind::Linear { stops, .. } | PaintKind::Radial { stops, .. } = &mut kind {
+            let mut removed = None;
+            let several = stops.len() > 2;
+            for (at, stop) in stops.iter_mut().enumerate() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.add_space(16.0);
+                    color_button(ui, &mut stop.color);
+                    let (mut place, mut opacity) = ((stop.at * 100.0).round(), (stop.opacity * 100.0).round());
+                    ui.add(DragValue::new(&mut place).range(0.0..=100.0).prefix("at ").suffix("%"));
+                    ui.add(DragValue::new(&mut opacity).range(0.0..=100.0).suffix("%"));
+                    (stop.at, stop.opacity) = (place / 100.0, opacity / 100.0);
+                    if several && ui.small_button("−").on_hover_text("Remove this stop").clicked() {
+                        removed = Some(at);
+                    }
+                });
+            }
+            if let Some(at) = removed {
+                stops.remove(at);
+            }
+            ui.horizontal(|ui| {
+                ui.add_space(16.0);
+                if ui.small_button("+ stop").clicked() {
+                    // Halfway along, in the colour of the first.
+                    let color = stops.first().map_or(NEW_FILL, |stop| stop.color);
+                    stops.push(Stop { at: 0.5, color, opacity: 1.0 });
+                }
+            });
+        }
+        if kind != paint.kind {
+            edit = Some(PaintEdit::Kind(index, kind));
+        }
     }
     edit
 }
@@ -370,10 +464,12 @@ impl Properties {
         }
 
         if let Some(edit) = paints(ui, "Fill", &fills) {
-            self.change(history, *id, "Fill", pointer_down && edit.dragged(), |node| edit.apply(&mut node.fills, NEW_FILL))?;
+            let dragged = pointer_down && edit.dragged();
+            self.change(history, *id, "Fill", dragged, |node| edit.apply(&mut node.fills, NEW_FILL))?;
         }
         if let Some(edit) = paints(ui, "Stroke", &stroke.paints) {
-            self.change(history, *id, "Stroke", pointer_down && edit.dragged(), |node| edit.apply(&mut node.stroke.paints, NEW_STROKE))?;
+            let dragged = pointer_down && edit.dragged();
+            self.change(history, *id, "Stroke", dragged, |node| edit.apply(&mut node.stroke.paints, NEW_STROKE))?;
         }
         if !stroke.paints.is_empty() {
             let mut edited = stroke.clone();
@@ -522,6 +618,24 @@ mod tests {
     }
 
     #[test]
+    fn a_colour_becomes_a_gradient_and_back_keeping_what_it_can() {
+        let red = Color::rgb(255, 0, 0);
+        let solid = PaintKind::Solid { color: red };
+        // It fades the colour out, top to bottom, as Figma's does.
+        let linear = converted(&solid, "Linear");
+        let fade = vec![Stop { at: 0.0, color: red, opacity: 1.0 }, Stop { at: 1.0, color: red, opacity: 0.0 }];
+        assert_eq!(linear, PaintKind::Linear { from: (0.5, 0.0), to: (0.5, 1.0), stops: fade.clone() });
+        assert_eq!(converted(&linear, "Radial"), PaintKind::Radial { from: (0.5, 0.5), to: (1.0, 0.5), stops: fade });
+        assert_eq!((converted(&linear, "Solid"), kind_name(&linear)), (solid, "Linear"));
+        // Top to bottom is 90°; a line at an angle goes through the middle.
+        assert_eq!(angle_of((0.5, 0.0), (0.5, 1.0)), 90.0);
+        let (from, to) = at_angle(0.0);
+        assert_eq!((from, to), ((0.0, 0.5), (1.0, 0.5)));
+        let (from, to) = at_angle(135.0);
+        assert!((angle_of(from, to) - 135.0).abs() < 1e-9 && ((from.0 + to.0) / 2.0 - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
     fn rotation_is_anticlockwise_about_the_middle() {
         let (mut history, id) = rectangle();
         let on_page = |history: &History, x: f64, y: f64| history.document().node(id).unwrap().transform * Point::new(x, y);
@@ -591,7 +705,7 @@ mod tests {
         assert_eq!(fills(&history), [Paint::solid(grey)]);
 
         edit(&mut history, PaintEdit::Add);
-        edit(&mut history, PaintEdit::Color(1, red));
+        edit(&mut history, PaintEdit::Kind(1, PaintKind::Solid { color: red }));
         edit(&mut history, PaintEdit::Opacity(1, 0.4));
         edit(&mut history, PaintEdit::Visible(0, false));
         let expected = [Paint { visible: false, ..Paint::solid(grey) }, Paint { opacity: 0.4, ..Paint::solid(red) }];
@@ -606,7 +720,7 @@ mod tests {
         // A fill that isn't there: nothing happens, and nothing to undo.
         let steps = history.undo_name().map(str::to_owned);
         edit(&mut history, PaintEdit::Remove(5));
-        edit(&mut history, PaintEdit::Color(5, grey));
+        edit(&mut history, PaintEdit::Kind(5, PaintKind::Solid { color: grey }));
         assert_eq!(fills(&history), expected[1..]);
         assert_eq!(history.undo_name().map(str::to_owned), steps);
         history.undo();

@@ -95,7 +95,11 @@ Every visual node carries:
 
 - **Fills**: a stack of paints (solid, linear/radial/angular/diamond
   gradient, image), each with its own opacity and blend mode. Any colour
-  or number can be bound to a variable.
+  or number can be bound to a variable. A gradient's two points are places
+  in the node's box, a unit square, so it follows the node when it is
+  resized or turned, and a radial one is as wide and as high as the box
+  makes it; the display list carries the transform from that square to
+  the page with each fill.
 - **Strokes**: a stack of paints plus one stroke style: weight, align
   (inside/centre/outside), cap, join, miter limit, dashes, and an optional
   **width profile** (widths at positions along each segment). A stroke is

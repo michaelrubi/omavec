@@ -11,7 +11,10 @@ use crate::paint::PaintKind;
 /// One filled path, in document units.
 pub struct Fill {
     pub path: BezPath,
-    pub color: peniko::Color,
+    pub brush: peniko::Brush,
+    /// From the brush's own coordinates to the document's. A gradient is
+    /// laid out in its node's box, a unit square.
+    pub transform: Affine,
     bounds: Rect,
 }
 
@@ -22,6 +25,8 @@ impl Fill {
 }
 
 /// One step of drawing a page.
+// Nearly every item is a fill, so boxing them would save nothing.
+#[allow(clippy::large_enum_variant)]
 pub enum Item {
     Fill(Fill),
     /// Until the `Unclip` that matches it, only what is inside the path shows.
@@ -36,7 +41,7 @@ pub enum Item {
 
 impl Item {
     pub fn new(path: BezPath, color: peniko::Color) -> Self {
-        Item::Fill(Fill { bounds: path.bounding_box(), path, color })
+        Item::Fill(Fill { bounds: path.bounding_box(), path, brush: color.into(), transform: Affine::IDENTITY })
     }
 }
 
@@ -74,9 +79,17 @@ impl DisplayList {
             let path = transform * path.clone();
             // A stroke with no weight has no area to paint.
             for paint in paints.iter().filter(|paint| paint.visible && !path.elements().is_empty()) {
-                let PaintKind::Solid { color } = paint.kind;
-                let alpha = (opacity * paint.opacity).clamp(0.0, 1.0) as f32;
-                list.items.push(Item::new(path.clone(), peniko::Color::from_rgb8(color.r, color.g, color.b).with_alpha(alpha)));
+                let strength = opacity * paint.opacity;
+                let color = |color: crate::paint::Color, opacity: f64| peniko::Color::from_rgb8(color.r, color.g, color.b).with_alpha((strength * opacity).clamp(0.0, 1.0) as f32);
+                let stops = |stops: Vec<crate::paint::Stop>| stops.into_iter().map(|stop| (stop.at.clamp(0.0, 1.0) as f32, color(stop.color, stop.opacity))).collect::<Vec<_>>();
+                let brush: peniko::Brush = match (&paint.kind, paint.kind.stops()) {
+                    (PaintKind::Linear { from, to, .. }, Some(along)) => peniko::Gradient::new_linear(*from, *to).with_stops(&stops(along)[..]).into(),
+                    (PaintKind::Radial { from, to, .. }, Some(along)) => peniko::Gradient::new_radial(*from, (to.0 - from.0).hypot(to.1 - from.1) as f32).with_stops(&stops(along)[..]).into(),
+                    (kind, _) => color(kind.color(), 1.0).into(),
+                };
+                let Item::Fill(mut fill) = Item::new(path.clone(), peniko::Color::TRANSPARENT) else { continue };
+                (fill.brush, fill.transform) = (brush, transform * Affine::scale_non_uniform(node.size.width, node.size.height));
+                list.items.push(Item::Fill(fill));
             }
         };
         if let Some(path) = &path {

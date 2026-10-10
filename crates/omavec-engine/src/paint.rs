@@ -40,6 +40,39 @@ impl TryFrom<String> for Color {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PaintKind {
     Solid { color: Color },
+    /// Colours along a line from `from` to `to`, which are places in the
+    /// node's box: (0, 0) is its top-left corner and (1, 1) its bottom-right.
+    Linear { from: (f64, f64), to: (f64, f64), stops: Vec<Stop> },
+    /// Colours outwards from `from` to the ellipse through `to`: a circle
+    /// in the box's own terms, so as wide and as high as the box makes it.
+    Radial { from: (f64, f64), to: (f64, f64), stops: Vec<Stop> },
+}
+
+/// A colour at a place along a gradient, from 0 at its start to 1 at its end.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Stop {
+    pub at: f64,
+    pub color: Color,
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub opacity: f64,
+}
+
+impl PaintKind {
+    /// The paint's one colour, or a gradient's first.
+    pub fn color(&self) -> Color {
+        match self {
+            PaintKind::Solid { color } => *color,
+            PaintKind::Linear { stops, .. } | PaintKind::Radial { stops, .. } => stops.first().map_or(Color::rgb(0, 0, 0), |stop| stop.color),
+        }
+    }
+
+    /// A gradient's stops, in order along it.
+    pub fn stops(&self) -> Option<Vec<Stop>> {
+        let (PaintKind::Linear { stops, .. } | PaintKind::Radial { stops, .. }) = self else { return None };
+        let mut stops = stops.clone();
+        stops.sort_by(|a, b| a.at.total_cmp(&b.at));
+        Some(stops)
+    }
 }
 
 /// One layer of a node's fill.

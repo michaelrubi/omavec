@@ -18,4 +18,4 @@ pub use export::Export;
 pub use document::{Document, Error, Node, NodeId, NodeKind};
 pub use history::History;
 pub use omavec_geom::stroke::{Align, Cap, Join};
-pub use paint::{Color, Paint, PaintKind, Stroke};
+pub use paint::{Color, Paint, PaintKind, Stop, Stroke};

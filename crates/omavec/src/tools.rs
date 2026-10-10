@@ -2,7 +2,7 @@
 //! tool never sees egui, so each is tested by calling it, and every drag is
 //! one undo step.
 
-use omavec_engine::{Document, Error, History, NodeId, NodeKind};
+use omavec_engine::{Cap, Document, Error, History, Node, NodeId, NodeKind};
 use omavec_geom::kurbo::{Affine, Line, ParamCurveNearest, Point, Rect, Size, Vec2};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -14,17 +14,33 @@ pub enum Tool {
     Frame,
     Rectangle,
     Ellipse,
+    Polygon,
+    Star,
+    Line,
+    Arrow,
 }
 
 impl Tool {
-    /// What the tool draws, if it draws.
+    /// What the tool draws, if it draws, as Figma starts each off.
     fn draws(self) -> Option<NodeKind> {
         match self {
             Tool::Move | Tool::Hand => None,
             Tool::Frame => Some(NodeKind::Frame { clip: true }),
             Tool::Rectangle => Some(NodeKind::Rectangle),
             Tool::Ellipse => Some(NodeKind::Ellipse),
+            Tool::Polygon => Some(NodeKind::Polygon { sides: 3 }),
+            Tool::Star => Some(NodeKind::Star { points: 5, ratio: 0.382 }),
+            Tool::Line | Tool::Arrow => Some(NodeKind::Line),
         }
+    }
+
+    /// A new node of the tool's kind, not yet in the tree or of any size.
+    fn node(self, document: &mut Document) -> Option<Node> {
+        let mut node = document.create(self.draws()?, Size::ZERO);
+        if self == Tool::Arrow {
+            node.stroke.end_cap = Cap::Arrow;
+        }
+        Some(node)
     }
 }
 
@@ -40,8 +56,9 @@ pub struct Keys {
 const CLICK_SIZE: f64 = 100.0;
 
 enum Drag {
-    /// Drawing a new node from `start`, in the coordinates of `parent`.
-    Draw { kind: NodeKind, parent: NodeId, start: Point, to_parent: Affine, node: Option<NodeId> },
+    /// Drawing a new node with `tool` from `start`, in the coordinates of
+    /// `parent`.
+    Draw { tool: Tool, parent: NodeId, start: Point, to_parent: Affine, node: Option<NodeId> },
     /// Moving the selection: each node with the transform it started with
     /// and the way from the page's coordinates to its parent's.
     /// `deselect` is the selected node that Shift went down on: a click
@@ -64,6 +81,11 @@ enum Drag {
     /// Shift keeps of the selection before it; `click` is the frame whose
     /// background the pointer went down on, which a click there selects.
     Marquee { page: NodeId, start: Point, to: Point, kept: Vec<NodeId>, click: Option<NodeId>, moved: bool },
+    /// Moving one end of the line `node`. The other end stays at `fixed`
+    /// (in the coordinates of the line's parent, which `to_parent` gives
+    /// from the page's); `start` says whether it is the line's start that
+    /// moves.
+    End { node: NodeId, start: bool, fixed: Point, to_parent: Affine, moved: bool },
 }
 
 /// What the pointer would take hold of on the box round the selection.
@@ -101,6 +123,27 @@ fn drawn(start: Point, to: Point, keys: Keys) -> Rect {
     }
     let from = if keys.alt { start - reach } else { start };
     Rect::from_points(from, start + reach)
+}
+
+/// Where a line from `from` to `to` sits and how long it is: Shift keeps it
+/// to the nearest eighth of a turn. A line runs along its own x axis.
+fn line(from: Point, to: Point, keys: Keys) -> (Affine, Size) {
+    let (mut angle, length) = ((to - from).atan2(), (to - from).hypot());
+    if keys.shift {
+        angle = (angle / std::f64::consts::FRAC_PI_4).round() * std::f64::consts::FRAC_PI_4;
+    }
+    (Affine::translate(from.to_vec2()) * Affine::rotate(angle), Size::new(length, 0.0))
+}
+
+/// Where a node drawn with `tool` from `start` to `to` sits, and its size.
+fn placed(tool: Tool, start: Point, to: Point, keys: Keys) -> (Affine, Size) {
+    if matches!(tool, Tool::Line | Tool::Arrow) {
+        // Alt draws it from its middle.
+        let from = if keys.alt { start - (to - start) } else { start };
+        return line(from, to, keys);
+    }
+    let area = drawn(start, to, keys);
+    (Affine::translate(area.origin().to_vec2()), area.size())
 }
 
 /// A box of `size` after the pointer has taken `handle` to `to` (in the
@@ -194,6 +237,14 @@ impl Tools {
         }
     }
 
+    /// The selection, if it is one line.
+    fn line<'a>(&self, document: &'a Document) -> Option<&'a Node> {
+        match self.selection[..] {
+            [one] => document.node(one).filter(|node| node.kind == NodeKind::Line),
+            _ => None,
+        }
+    }
+
     /// What of the selection's box is within reach of `at`: a corner, then
     /// an edge, then the space just outside a corner that turns it.
     pub fn grab_at(&self, document: &Document, at: Point) -> Option<Grab> {
@@ -210,6 +261,10 @@ impl Tools {
             let near = Line::new(on_page(a), on_page(b)).nearest(at, 1e-9).distance_sq <= self.grab * self.grab;
             near.then_some(((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0))
         });
+        // A line is taken by its ends alone: the rest of it moves it.
+        if self.line(document).is_some() {
+            return corner.map(Grab::Resize);
+        }
         let outside = !area.contains(to_page.inverse() * at);
         corner.or(edge).map(Grab::Resize).or((outside && nearest <= self.grab * 3.0).then_some(Grab::Rotate))
     }
@@ -252,13 +307,13 @@ impl Tools {
     pub fn press(&mut self, history: &History, page: NodeId, at: Point, keys: Keys) {
         let document = history.document();
         self.drag = match self.tool.draws() {
-            Some(kind) => {
+            Some(_) => {
                 // A new node goes into the deepest frame under the pointer.
                 let chain = document.node(page).map(|page| page.hit(at)).unwrap_or_default();
                 let frame = chain.iter().rev().copied().find(|id| document.node(*id).is_some_and(|node| matches!(node.kind, NodeKind::Frame { .. })));
                 let parent = frame.unwrap_or(page);
                 let to_parent = document.to_page(parent).unwrap_or_default().inverse();
-                Some(Drag::Draw { kind, parent, start: to_parent * at, to_parent, node: None })
+                Some(Drag::Draw { tool: self.tool, parent, start: to_parent * at, to_parent, node: None })
             }
             None => {
                 // A handle of the selection's box comes before whatever is under it.
@@ -268,7 +323,13 @@ impl Tools {
                         [one] => document.node(one).filter(|node| node.kind != NodeKind::Group),
                         _ => None,
                     };
+                    let to_parent = document.parent(self.selection[0]).and_then(|parent| document.to_page(parent)).unwrap_or_default().inverse();
                     self.drag = Some(match (grab, one) {
+                        (Grab::Resize(handle), Some(node)) if node.kind == NodeKind::Line => {
+                            // The end that stays is the one the handle isn't on.
+                            let fixed = node.transform * Point::new((1.0 - handle.0) * node.size.width, 0.0);
+                            Drag::End { node: node.id, start: handle.0 == 0.0, fixed, to_parent, moved: false }
+                        }
                         (Grab::Resize(handle), Some(node)) => Drag::Resize { node: node.id, handle, began: node.transform, size: node.size, to_local: to_page.inverse(), offset: held(handle), moved: false },
                         (Grab::Resize(handle), None) => Drag::Stretch { began: document.clone(), handle, to_page, area, offset: held(handle), moved: false },
                         (Grab::Rotate, _) => {
@@ -306,9 +367,9 @@ impl Tools {
     /// The pointer moved to `at` with the button held.
     pub fn drag(&mut self, history: &mut History, at: Point, keys: Keys) -> Result<(), Error> {
         match &mut self.drag {
-            Some(Drag::Draw { kind, parent, start, to_parent, node }) => {
-                let area = drawn(*start, *to_parent * at, keys);
-                let (kind, parent) = (kind.clone(), *parent);
+            Some(Drag::Draw { tool, parent, start, to_parent, node }) => {
+                let (transform, size) = placed(*tool, *start, *to_parent * at, keys);
+                let (tool, parent) = (*tool, *parent);
                 if node.is_none() {
                     history.begin("Draw");
                 }
@@ -316,18 +377,38 @@ impl Tools {
                     let id = match *node {
                         Some(id) => id,
                         None => {
-                            let new = document.create(kind, Size::ZERO);
+                            let new = tool.node(document).ok_or(Error::Nothing)?;
                             let id = new.id;
                             document.insert(parent, usize::MAX, new)?;
                             id
                         }
                     };
                     let shape = document.node_mut(id)?;
-                    (shape.transform, shape.size) = (Affine::translate(area.origin().to_vec2()), area.size());
+                    (shape.transform, shape.size) = (transform, size);
                     Ok(id)
                 })?;
                 *node = Some(drawing);
                 self.selection = vec![drawing];
+            }
+            Some(Drag::End { node, start, fixed, to_parent, moved }) => {
+                if !*moved {
+                    history.begin("Resize");
+                    *moved = true;
+                }
+                let end = *to_parent * at;
+                // A line starts at its origin: Shift's angle is about the end that stays.
+                let (transform, size) = if *start {
+                    let (turned, size) = line(*fixed, end, keys);
+                    let end = turned * Point::new(size.width, 0.0);
+                    (Affine::translate(end.to_vec2()) * Affine::rotate((*fixed - end).atan2()), size)
+                } else {
+                    line(*fixed, end, keys)
+                };
+                history.edit("Resize", |document| {
+                    let shape = document.node_mut(*node)?;
+                    (shape.transform, shape.size) = (transform, size);
+                    Ok(())
+                })?;
             }
             Some(Drag::Move { start, nodes, moved, .. }) => {
                 if !*moved {
@@ -430,9 +511,10 @@ impl Tools {
     pub fn release(&mut self, history: &mut History) -> Result<(), Error> {
         match self.drag.take() {
             // A click with a drawing tool: a shape of the usual size, there.
-            Some(Drag::Draw { kind, parent, start, node: None, .. }) => {
+            Some(Drag::Draw { tool, parent, start, node: None, .. }) => {
                 let id = history.edit("Draw", |document| {
-                    let mut new = document.create(kind, Size::new(CLICK_SIZE, CLICK_SIZE));
+                    let mut new = tool.node(document).ok_or(Error::Nothing)?;
+                    new.size = if new.kind == NodeKind::Line { Size::new(CLICK_SIZE, 0.0) } else { Size::new(CLICK_SIZE, CLICK_SIZE) };
                     new.transform = Affine::translate(start.to_vec2());
                     let id = new.id;
                     document.insert(parent, usize::MAX, new)?;
@@ -447,7 +529,7 @@ impl Tools {
                 self.tool = Tool::Move;
             }
             Some(Drag::Move { moved: false, deselect: Some(node), .. }) => self.selection.retain(|selected| *selected != node),
-            Some(Drag::Move { .. } | Drag::Resize { .. } | Drag::Stretch { .. } | Drag::Rotate { .. }) => history.commit(),
+            Some(Drag::Move { .. } | Drag::Resize { .. } | Drag::Stretch { .. } | Drag::Rotate { .. } | Drag::End { .. }) => history.commit(),
             // A click on a frame's background selects the frame.
             Some(Drag::Marquee { click: Some(frame), moved: false, .. }) => match self.selection.iter().position(|selected| *selected == frame) {
                 Some(index) => drop(self.selection.remove(index)),
@@ -466,7 +548,7 @@ impl Tools {
                 history.cancel();
                 self.selection.retain(|selected| Some(*selected) != node);
             }
-            Some(Drag::Move { .. } | Drag::Resize { .. } | Drag::Stretch { .. } | Drag::Rotate { .. }) => history.cancel(),
+            Some(Drag::Move { .. } | Drag::Resize { .. } | Drag::Stretch { .. } | Drag::Rotate { .. } | Drag::End { .. }) => history.cancel(),
             Some(Drag::Marquee { kept, .. }) => self.selection = kept,
             None if self.tool != Tool::Move => self.tool = Tool::Move,
             None => self.selection.clear(),
@@ -1052,5 +1134,80 @@ mod tests {
         let document = desk.history.document();
         assert_eq!(document.node(a).unwrap().size, Size::new(200.0, 100.0));
         assert_eq!((document.node(b).unwrap().size, document.node(b).unwrap().transform), (Size::new(200.0, 100.0), Affine::translate((400.0, 100.0))));
+    }
+
+    #[test]
+    fn the_other_tools_draw_figmas_shapes() {
+        let mut desk = Desk::new();
+        let polygon = desk.draw(Tool::Polygon, (0.0, 0.0), (100.0, 80.0));
+        let star = desk.draw(Tool::Star, (200.0, 0.0), (300.0, 100.0));
+        let kind = |desk: &Desk, id| desk.history.document().node(id).unwrap().kind.clone();
+        assert_eq!((kind(&desk, polygon), desk.bounds(polygon)), (NodeKind::Polygon { sides: 3 }, Rect::new(0.0, 0.0, 100.0, 80.0)));
+        assert_eq!((kind(&desk, star), desk.bounds(star)), (NodeKind::Star { points: 5, ratio: 0.382 }, Rect::new(200.0, 0.0, 300.0, 100.0)));
+        assert_eq!(desk.tools.tool, Tool::Move);
+    }
+
+    /// Where a line starts and ends on the page.
+    fn ends(desk: &Desk, id: NodeId) -> (Point, Point) {
+        let document = desk.history.document();
+        let (to_page, node) = (document.to_page(id).unwrap(), document.node(id).unwrap());
+        assert_eq!(node.size.height, 0.0);
+        (to_page * Point::ZERO, to_page * Point::new(node.size.width, 0.0))
+    }
+
+    fn near(a: (Point, Point), b: ((f64, f64), (f64, f64))) -> bool {
+        (a.0 - Point::from(b.0)).hypot() < 1e-9 && (a.1 - Point::from(b.1)).hypot() < 1e-9
+    }
+
+    #[test]
+    fn a_line_runs_from_where_the_drag_began_to_where_it_ended() {
+        let mut desk = Desk::new();
+        let line = desk.draw(Tool::Line, (100.0, 100.0), (130.0, 60.0));
+        let node = desk.history.document().node(line).unwrap().clone();
+        assert_eq!((node.kind.clone(), node.size), (NodeKind::Line, Size::new(50.0, 0.0)));
+        assert!(near(ends(&desk, line), ((100.0, 100.0), (130.0, 60.0))), "{:?}", ends(&desk, line));
+        // Black, one unit wide, with nothing on its ends; an arrow has a head.
+        assert_eq!((node.stroke.paints.len(), node.stroke.weight, node.stroke.end_cap, node.fills.len()), (1, 1.0, Cap::None, 0));
+        let arrow = desk.draw(Tool::Arrow, (0.0, 0.0), (0.0, 40.0));
+        assert_eq!(desk.history.document().node(arrow).unwrap().stroke.end_cap, Cap::Arrow);
+        assert!(near(ends(&desk, arrow), ((0.0, 0.0), (0.0, 40.0))));
+
+        // Shift keeps it to an eighth of a turn; Alt draws it from its middle.
+        desk.tools.tool = Tool::Line;
+        desk.stroke((0.0, 0.0), &[(100.0, 8.0)], Keys { shift: true, ..Keys::default() });
+        let flat = desk.tools.selection[0];
+        assert!(near(ends(&desk, flat), ((0.0, 0.0), (100.0f64.hypot(8.0), 0.0))), "{:?}", ends(&desk, flat));
+        desk.tools.tool = Tool::Line;
+        desk.stroke((50.0, 50.0), &[(80.0, 50.0)], Keys { alt: true, ..Keys::default() });
+        assert!(near(ends(&desk, desk.tools.selection[0]), ((20.0, 50.0), (80.0, 50.0))));
+        // A click draws one of the usual length.
+        desk.tools.tool = Tool::Line;
+        desk.stroke((300.0, 300.0), &[], Keys::default());
+        assert!(near(ends(&desk, desk.tools.selection[0]), ((300.0, 300.0), (400.0, 300.0))));
+    }
+
+    #[test]
+    fn a_line_is_reshaped_by_its_ends_and_moved_by_the_rest_of_it() {
+        let mut desk = Desk::new();
+        let line = desk.draw(Tool::Line, (100.0, 100.0), (200.0, 100.0));
+        desk.tools.grab = 4.0;
+        let document = desk.history.document();
+        assert_eq!(desk.tools.grab_at(document, (201.0, 101.0).into()), Some(Grab::Resize((1.0, 0.0))));
+        assert_eq!(desk.tools.grab_at(document, (150.0, 100.0).into()), None, "along it is the line itself");
+        // Its end, to somewhere else: the start stays.
+        desk.stroke((200.0, 100.0), &[(180.0, 160.0)], Keys::default());
+        assert!(near(ends(&desk, line), ((100.0, 100.0), (180.0, 160.0))), "{:?}", ends(&desk, line));
+        assert_eq!(desk.history.undo_name(), Some("Resize"));
+        // Its start: the end stays, and it still runs from start to end.
+        desk.stroke((100.0, 100.0), &[(120.0, 40.0)], Keys::default());
+        assert!(near(ends(&desk, line), ((120.0, 40.0), (180.0, 160.0))), "{:?}", ends(&desk, line));
+        // With Shift, straight up from the end that stays.
+        desk.stroke((120.0, 40.0), &[(184.0, 60.0)], Keys { shift: true, ..Keys::default() });
+        let (start, end) = ends(&desk, line);
+        assert!((start.x - 180.0).abs() < 1e-9 && start.y < 160.0 && (end - Point::new(180.0, 160.0)).hypot() < 1e-9, "{start:?} {end:?}");
+        // By its middle it moves, both ends together.
+        desk.history.edit("Flat", |document| document.node_mut(line).map(|node| (node.transform, node.size) = (Affine::translate((0.0, 0.0)), Size::new(100.0, 0.0)))).unwrap();
+        desk.stroke((50.0, 1.0), &[(60.0, 21.0)], Keys::default());
+        assert!(near(ends(&desk, line), ((10.0, 20.0), (110.0, 20.0))), "{:?}", ends(&desk, line));
     }
 }

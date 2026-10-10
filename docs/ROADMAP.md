@@ -236,10 +236,18 @@ reopen and export.
   alias arrow).
 - Tools: Frame (artboards = top-level frames, with Figma's device presets),
   Rectangle (per-corner radii), Ellipse (arc/ratio), Polygon, Star, Line,
-  Arrow. Built so far: Frame (F), Rectangle (R) and Ellipse (O) by
-  dragging, a square or circle with Shift, from the middle with Alt, 100 ×
-  100 on a click; a shape started over a frame goes into it; the tool
-  hands back to Move (V). Left: presets, radii, arcs, and the other four.
+  Arrow. Built so far: Frame (F), Rectangle (R), Ellipse (O), Polygon,
+  Star, Line (L) and Arrow (Shift+L) by dragging: a square or circle with
+  Shift, from the middle with Alt, 100 × 100 on a click; a line to the
+  nearest 45° with Shift; a shape started over a frame goes into it; the
+  tool hands back to Move (V). A line is reshaped by dragging either end.
+  The Design panel has a frame's or rectangle's corner radius and whether
+  a frame clips, an ellipse's start, sweep and ratio (which make it a pie
+  slice or a ring), a polygon's count, and a star's count and ratio. The
+  outlines are `omavec_geom::shapes`. Left: frame presets, a radius for
+  each corner in the panel (the file and the renderer have them), rounded
+  corners on polygons and stars, and handles on the canvas for radius and
+  arc.
 - Paint: solid fills and strokes, multiple fills, opacity, blend modes;
   linear/radial/angular/diamond gradients with on-canvas handles; the
   colour picker with eyedropper. Built so far: a stack of solid fills per
@@ -250,14 +258,19 @@ reopen and export.
   panel lists one selected node's fills and stroke paints, top first,
   with a colour picker, opacity, a show/hide box and add and remove, and
   the stroke's weight and side; a drag on any of them is one undo step.
-  Left: blend modes, gradients, the eyedropper, caps, joins and dashes,
-  and editing several nodes at once.
+  A stroke also has a join (mitre, bevel, round) and, on a line, a cap
+  for each end: none, round, square, an open arrowhead or a filled one.
+  The panel has the node's own opacity too.
+  Left: blend modes, gradients, the eyedropper, dashes, and editing
+  several nodes at once.
   A node's opacity fades the whole of it as one layer, and a frame that
   clips hides what its children draw outside it, on the canvas and in
   exported PNG and SVG alike.
   Later: a stroke counted in hit testing and in a node's bounds; the
   hairline of backdrop that shows between a fill and an outside stroke
-  where their antialiased edges meet.
+  where their antialiased edges meet; an arrowhead whose point stops at
+  the end of the line (it reaches up to the stroke's weight past it, so
+  that the line's square end is inside it).
 - Panels: layers (tree, rename, reorder by drag, hide, lock, multi-select),
   properties (Figma's right panel layout). Built so far: the layers panel
   (select, Shift-select, rename by double-click, hide and lock per row and

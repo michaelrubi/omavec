@@ -102,12 +102,26 @@ Every visual node carries:
   drawn as the area it covers: a centred stroke's outline, and for inside
   or outside a stroke twice as wide cut to the half inside or outside the
   shape. SVG has only centred strokes, so those export as `stroke`
-  attributes and the other two as the area, a filled path.
+  attributes and the other two as the area, a filled path. A path that
+  isn't closed has no inside, so its stroke is centred, and each end has
+  a cap: none, round, square, or an arrowhead (open or filled) that is
+  joined to the stroke's area.
 - **Effects**: drop shadow, inner shadow, layer blur, background blur.
 - **Modifiers**: an ordered, live list of geometry operations: Offset Path,
   Outline Stroke, Warp/Envelope, Round Corners, Simplify. This is
   Illustrator's Appearance panel in Figma's node tree. Flatten bakes the
   whole stack into a plain `Vector`.
+
+What is built of that tree so far: `Page`, `Frame`, `Group`, and the
+shapes as kinds of their own: `Rectangle`, `Ellipse`, `Arc` (an ellipse
+with part of it gone or a hole in it; the panel turns one into the other),
+`Polygon`, `Star` and `Line`. A node has a radius for each corner, used by
+frames and rectangles. A line lies along the top of its box, which has no
+height; it is drawn by its stroke, and its two ends are its handles.
+`Node::shape` gives any of them as a path, from `omavec_geom::shapes`.
+kurbo's own ellipse is not a closed path, so ours is the arc function
+going all the way round: a stroke needs to know a shape is closed to have
+an inside.
 
 A group has no size of its own: its box is whatever holds its children
 (`Node::bounds`), so moving a child changes the group's box without a

@@ -15,12 +15,16 @@ use crate::theme::{self, Theme};
 use crate::tools::{Grab, Keys, Tool, Tools};
 
 /// The tools in the tool bar, with the command that picks each.
-const TOOLS: [(Tool, Command); 5] = [
+const TOOLS: [(Tool, Command); 9] = [
     (Tool::Move, Command::MoveTool),
     (Tool::Hand, Command::HandTool),
     (Tool::Frame, Command::FrameTool),
     (Tool::Rectangle, Command::RectangleTool),
     (Tool::Ellipse, Command::EllipseTool),
+    (Tool::Polygon, Command::PolygonTool),
+    (Tool::Star, Command::StarTool),
+    (Tool::Line, Command::LineTool),
+    (Tool::Arrow, Command::ArrowTool),
 ];
 
 pub struct App {
@@ -331,7 +335,7 @@ impl App {
                 let nudged = self.tools.nudge(&mut self.history, by);
                 self.check(nudged);
             }
-            Command::MoveTool | Command::HandTool | Command::FrameTool | Command::RectangleTool | Command::EllipseTool => {
+            Command::MoveTool | Command::HandTool | Command::FrameTool | Command::RectangleTool | Command::EllipseTool | Command::PolygonTool | Command::StarTool | Command::LineTool | Command::ArrowTool => {
                 if let Some((tool, _)) = TOOLS.iter().find(|(_, picks)| *picks == command) {
                     self.tools.tool = *tool;
                 }
@@ -824,6 +828,30 @@ mod tests {
         frame(&ctx, &mut app, vec![button(true)]);
         frame(&ctx, &mut app, vec![button(false)]);
         assert_eq!(app.tools.selection, [first]);
+    }
+
+    #[test]
+    fn every_tool_draws_its_shape_and_the_panels_show_it() {
+        let (ctx, mut app, canvas) = app();
+        let mut kinds = Vec::new();
+        for (index, (tool, command)) in TOOLS.into_iter().enumerate().skip(2) {
+            app.run(command, &ctx);
+            assert_eq!(app.tools.tool, tool);
+            let from = canvas.min + vec2(20.0 + 45.0 * index as f32, 40.0 + 40.0 * (index % 2) as f32);
+            drag(&ctx, &mut app, from, from + vec2(40.0, 30.0));
+            // A frame with the new node selected: the Design panel has its fields.
+            frame(&ctx, &mut app, vec![]);
+            let [id] = app.tools.selection[..] else { panic!("{tool:?} drew nothing") };
+            kinds.push(app.history.document().node(id).unwrap().kind.clone());
+            assert_eq!((app.tools.tool, &app.status), (Tool::Move, &None));
+        }
+        let expected = [NodeKind::Frame { clip: true }, NodeKind::Rectangle, NodeKind::Ellipse, NodeKind::Polygon { sides: 3 }, NodeKind::Star { points: 5, ratio: 0.382 }, NodeKind::Line, NodeKind::Line];
+        assert_eq!(kinds, expected);
+        // L and Shift+L are the line and the arrow.
+        frame(&ctx, &mut app, key(Key::L, Modifiers::NONE));
+        assert_eq!(app.tools.tool, Tool::Line);
+        frame(&ctx, &mut app, key(Key::L, Modifiers::SHIFT));
+        assert_eq!(app.tools.tool, Tool::Arrow);
     }
 
     #[test]

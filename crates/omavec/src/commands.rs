@@ -37,6 +37,10 @@ pub enum Command {
     FrameTool,
     RectangleTool,
     EllipseTool,
+    PolygonTool,
+    StarTool,
+    LineTool,
+    ArrowTool,
     ZoomIn,
     ZoomOut,
     ZoomTo100,
@@ -50,7 +54,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Command; 42] = [
+    pub const ALL: [Command; 46] = [
         Command::New,
         Command::Open,
         Command::Save,
@@ -83,6 +87,10 @@ impl Command {
         Command::FrameTool,
         Command::RectangleTool,
         Command::EllipseTool,
+        Command::PolygonTool,
+        Command::StarTool,
+        Command::LineTool,
+        Command::ArrowTool,
         Command::ZoomIn,
         Command::ZoomOut,
         Command::ZoomTo100,
@@ -129,6 +137,10 @@ impl Command {
             Command::FrameTool => "Frame",
             Command::RectangleTool => "Rectangle",
             Command::EllipseTool => "Ellipse",
+            Command::PolygonTool => "Polygon",
+            Command::StarTool => "Star",
+            Command::LineTool => "Line",
+            Command::ArrowTool => "Arrow",
             Command::ZoomIn => "Zoom In",
             Command::ZoomOut => "Zoom Out",
             Command::ZoomTo100 => "Zoom to 100%",
@@ -179,6 +191,10 @@ impl Command {
             Command::FrameTool => (Modifiers::NONE, Key::F),
             Command::RectangleTool => (Modifiers::NONE, Key::R),
             Command::EllipseTool => (Modifiers::NONE, Key::O),
+            Command::LineTool => (Modifiers::NONE, Key::L),
+            Command::ArrowTool => (Modifiers::SHIFT, Key::L),
+            // Figma gives these two no key.
+            Command::PolygonTool | Command::StarTool => return None,
             Command::ZoomIn => (Modifiers::COMMAND, Key::Equals),
             Command::ZoomOut => (Modifiers::COMMAND, Key::Minus),
             Command::ZoomTo100 => (Modifiers::SHIFT, Key::Num0),

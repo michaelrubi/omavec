@@ -2,7 +2,7 @@
 //! numbers that can be dragged or typed.
 
 use egui::{DragValue, Ui};
-use omavec_engine::{Align, Color, Error, History, Node, NodeId, NodeKind, Paint, PaintKind};
+use omavec_engine::{Align, Cap, Color, Error, History, Join, Node, NodeId, NodeKind, Paint, PaintKind};
 use omavec_geom::kurbo::Affine;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -75,6 +75,93 @@ impl Field {
                 let middle = area.center();
                 let stays = node.transform * middle;
                 node.transform = Affine::translate(stays.to_vec2()) * Affine::rotate(-value.to_radians()) * Affine::translate(-middle.to_vec2());
+            }
+        }
+    }
+}
+
+/// A number that only some kinds of node have, as the panel shows it:
+/// angles in degrees, and fractions as percentages.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Param {
+    Opacity,
+    /// All four corners at once.
+    Radius,
+    /// The angle an ellipse's arc starts at, clockwise from three o'clock.
+    Start,
+    /// How much of the ellipse there is: 100 is all of it.
+    Sweep,
+    /// The hole in an ellipse, or how far out a star's inner corners are.
+    Ratio,
+    /// A polygon's sides, or a star's points.
+    Count,
+}
+
+/// An ellipse's arc: where it starts, how far it goes, and its hole.
+fn arc(node: &Node) -> (f64, f64, f64) {
+    match node.kind {
+        NodeKind::Arc { start, sweep, ratio } => (start, sweep, ratio),
+        _ => (0.0, std::f64::consts::TAU, 0.0),
+    }
+}
+
+impl Param {
+    /// The ones `node` has, in the order the panel shows them.
+    fn of(node: &Node) -> Vec<Param> {
+        let own: &[Param] = match node.kind {
+            NodeKind::Frame { .. } | NodeKind::Rectangle => &[Param::Radius],
+            NodeKind::Ellipse | NodeKind::Arc { .. } => &[Param::Start, Param::Sweep, Param::Ratio],
+            NodeKind::Polygon { .. } => &[Param::Count],
+            NodeKind::Star { .. } => &[Param::Count, Param::Ratio],
+            NodeKind::Page | NodeKind::Group | NodeKind::Line => &[],
+        };
+        [Param::Opacity].into_iter().chain(own.iter().copied()).collect()
+    }
+
+    /// Its label, the unit after it, and the values it can take.
+    fn looks(self) -> (&'static str, &'static str, std::ops::RangeInclusive<f64>) {
+        match self {
+            Param::Opacity => ("Opacity ", "%", 0.0..=100.0),
+            Param::Radius => ("Radius ", "", 0.0..=f64::MAX),
+            Param::Start => ("Start ", "°", -360.0..=360.0),
+            Param::Sweep => ("Sweep ", "%", -100.0..=100.0),
+            Param::Ratio => ("Ratio ", "%", 0.0..=100.0),
+            Param::Count => ("Count ", "", 3.0..=100.0),
+        }
+    }
+
+    fn get(self, node: &Node) -> f64 {
+        let (start, sweep, hole) = arc(node);
+        match (self, &node.kind) {
+            (Param::Opacity, _) => node.opacity * 100.0,
+            (Param::Radius, _) => node.radii[0],
+            (Param::Start, _) => start.to_degrees(),
+            (Param::Sweep, _) => sweep / std::f64::consts::TAU * 100.0,
+            (Param::Ratio, NodeKind::Star { ratio, .. }) => ratio * 100.0,
+            (Param::Ratio, _) => hole * 100.0,
+            (Param::Count, NodeKind::Polygon { sides: count } | NodeKind::Star { points: count, .. }) => f64::from(*count),
+            (Param::Count, _) => 0.0,
+        }
+    }
+
+    fn set(self, node: &mut Node, value: f64) {
+        let value = value.clamp(*self.looks().2.start(), *self.looks().2.end());
+        let (mut start, mut sweep, mut hole) = arc(node);
+        match (self, &mut node.kind) {
+            (Param::Opacity, _) => node.opacity = value / 100.0,
+            (Param::Radius, _) => node.radii = [value; 4],
+            (Param::Ratio, NodeKind::Star { ratio, .. }) => *ratio = value / 100.0,
+            (Param::Count, NodeKind::Polygon { sides: count } | NodeKind::Star { points: count, .. }) => *count = value.round() as u32,
+            (Param::Count, _) => {}
+            (Param::Start | Param::Sweep | Param::Ratio, kind) => {
+                match self {
+                    Param::Start => start = value.to_radians(),
+                    Param::Sweep => sweep = value / 100.0 * std::f64::consts::TAU,
+                    _ => hole = value / 100.0,
+                }
+                // All of it, with no hole, is a plain ellipse again.
+                let whole = sweep.abs() >= std::f64::consts::TAU && hole == 0.0;
+                *kind = if whole { NodeKind::Ellipse } else { NodeKind::Arc { start, sweep, ratio: hole } };
             }
         }
     }
@@ -194,6 +281,8 @@ impl Properties {
         };
         let Some(node) = history.document().node(*id) else { return Ok(()) };
         let (values, fills, stroke) = (Field::ALL.map(|field| field.get(node)), node.fills.clone(), node.stroke.clone());
+        let params: Vec<(Param, f64)> = Param::of(node).into_iter().map(|param| (param, param.get(node))).collect();
+        let (mut clip, mut clip_changed, line) = (if let NodeKind::Frame { clip } = node.kind { Some(clip) } else { None }, false, node.kind == NodeKind::Line);
         ui.label(&node.name);
         ui.add_space(4.0);
 
@@ -211,6 +300,29 @@ impl Properties {
         if let Some((field, value)) = moved {
             self.change(history, *id, field.step(), pointer_down, |node| field.set(node, value))?;
         }
+        let mut set = None;
+        ui.horizontal_wrapped(|ui| {
+            for (param, was) in params {
+                let (label, suffix, range) = param.looks();
+                let mut value = was;
+                ui.add(DragValue::new(&mut value).speed(1.0).range(range).max_decimals(2).prefix(label).suffix(suffix));
+                if value != was {
+                    set = Some((param, value));
+                }
+            }
+            if let Some(mut clips) = clip
+                && ui.checkbox(&mut clips, "Clip content").changed()
+            {
+                clip = Some(clips);
+                clip_changed = true;
+            }
+        });
+        if let Some((param, value)) = set {
+            self.change(history, *id, "Shape", pointer_down, |node| param.set(node, value))?;
+        }
+        if let (true, Some(clip)) = (clip_changed, clip) {
+            self.change(history, *id, "Clip Content", false, |node| node.kind = NodeKind::Frame { clip })?;
+        }
 
         if let Some(edit) = paints(ui, "Fill", &fills) {
             self.change(history, *id, "Fill", pointer_down && edit.dragged(), |node| edit.apply(&mut node.fills, NEW_FILL))?;
@@ -219,20 +331,30 @@ impl Properties {
             self.change(history, *id, "Stroke", pointer_down && edit.dragged(), |node| edit.apply(&mut node.stroke.paints, NEW_STROKE))?;
         }
         if !stroke.paints.is_empty() {
-            let (mut weight, mut align) = (stroke.weight, stroke.align);
-            ui.horizontal(|ui| {
-                ui.add(DragValue::new(&mut weight).speed(0.1).range(0.0..=f64::MAX).max_decimals(2).prefix("Weight "));
-                egui::ComboBox::from_id_salt("stroke align").selected_text(format!("{align:?}")).show_ui(ui, |ui| {
-                    for side in [Align::Inside, Align::Center, Align::Outside] {
-                        ui.selectable_value(&mut align, side, format!("{side:?}"));
+            let mut edited = stroke.clone();
+            // Each choice of a kind, as a drop-down that says which it is.
+            fn choice<T: Copy + PartialEq + std::fmt::Debug>(ui: &mut Ui, name: &str, value: &mut T, all: &[T]) {
+                egui::ComboBox::from_id_salt(name).selected_text(format!("{value:?}")).show_ui(ui, |ui| {
+                    for one in all {
+                        ui.selectable_value(value, *one, format!("{one:?}"));
                     }
                 });
-            });
-            if weight != stroke.weight {
-                self.change(history, *id, "Stroke", pointer_down, |node| node.stroke.weight = weight)?;
             }
-            if align != stroke.align {
-                self.change(history, *id, "Stroke", false, |node| node.stroke.align = align)?;
+            ui.horizontal_wrapped(|ui| {
+                ui.add(DragValue::new(&mut edited.weight).speed(0.1).range(0.0..=f64::MAX).max_decimals(2).prefix("Weight "));
+                // A line has no inside or outside, but it has ends.
+                if line {
+                    let caps = [Cap::None, Cap::Round, Cap::Square, Cap::Arrow, Cap::Triangle];
+                    choice(ui, "stroke start", &mut edited.start_cap, &caps);
+                    choice(ui, "stroke end", &mut edited.end_cap, &caps);
+                } else {
+                    choice(ui, "stroke align", &mut edited.align, &[Align::Inside, Align::Center, Align::Outside]);
+                    choice(ui, "stroke join", &mut edited.join, &[Join::Miter, Join::Bevel, Join::Round]);
+                }
+            });
+            if edited != stroke {
+                // Only the weight is dragged; the rest is picked from a list.
+                self.change(history, *id, "Stroke", pointer_down && edited.weight != stroke.weight, |node| node.stroke = edited)?;
             }
         }
         Ok(())
@@ -304,6 +426,49 @@ mod tests {
         type_in(&mut history, group, Field::Rotation, 90.0);
         let node = history.document().node(group).unwrap();
         assert!((node.transform * node.bounds().center() - middle).hypot() < 1e-9, "the middle moved");
+    }
+
+    #[test]
+    fn each_kind_of_node_has_its_own_numbers() {
+        let (mut history, id) = rectangle();
+        let kinds = |history: &History| Param::of(history.document().node(id).unwrap());
+        let get = |history: &History, param: Param| param.get(history.document().node(id).unwrap());
+        let set = |history: &mut History, param: Param, value: f64| Properties::default().change(history, id, "Shape", false, |node| param.set(node, value)).unwrap();
+        let become_a = |history: &mut History, kind: NodeKind| history.edit("Kind", |document| document.node_mut(id).map(|node| node.kind = kind)).unwrap();
+
+        assert_eq!(kinds(&history), [Param::Opacity, Param::Radius]);
+        set(&mut history, Param::Radius, 12.0);
+        set(&mut history, Param::Opacity, 250.0);
+        let node = history.document().node(id).unwrap();
+        assert_eq!((node.radii, node.opacity), ([12.0; 4], 1.0));
+        set(&mut history, Param::Opacity, 40.0);
+        assert_eq!(get(&history, Param::Opacity), 40.0);
+
+        // An ellipse becomes an arc when part of it goes, and an ellipse
+        // again when all of it is back.
+        become_a(&mut history, NodeKind::Ellipse);
+        assert_eq!(kinds(&history), [Param::Opacity, Param::Start, Param::Sweep, Param::Ratio]);
+        assert_eq!([Param::Start, Param::Sweep, Param::Ratio].map(|param| get(&history, param)), [0.0, 100.0, 0.0]);
+        set(&mut history, Param::Sweep, 25.0);
+        set(&mut history, Param::Start, 90.0);
+        let NodeKind::Arc { start, sweep, ratio } = history.document().node(id).unwrap().kind else { panic!() };
+        assert!((start - std::f64::consts::FRAC_PI_2).abs() < 1e-12 && (sweep - std::f64::consts::FRAC_PI_2).abs() < 1e-12 && ratio == 0.0);
+        set(&mut history, Param::Ratio, 50.0);
+        set(&mut history, Param::Sweep, 100.0);
+        assert_eq!(history.document().node(id).unwrap().kind, NodeKind::Arc { start, sweep: std::f64::consts::TAU, ratio: 0.5 }, "a ring");
+        set(&mut history, Param::Ratio, 0.0);
+        assert_eq!(history.document().node(id).unwrap().kind, NodeKind::Ellipse);
+
+        become_a(&mut history, NodeKind::Star { points: 5, ratio: 0.382 });
+        assert_eq!(kinds(&history), [Param::Opacity, Param::Count, Param::Ratio]);
+        set(&mut history, Param::Count, 7.4);
+        set(&mut history, Param::Ratio, 60.0);
+        assert_eq!(history.document().node(id).unwrap().kind, NodeKind::Star { points: 7, ratio: 0.6 });
+        become_a(&mut history, NodeKind::Polygon { sides: 3 });
+        set(&mut history, Param::Count, 1.0);
+        assert_eq!(history.document().node(id).unwrap().kind, NodeKind::Polygon { sides: 3 }, "no fewer than three");
+        set(&mut history, Param::Count, 8.0);
+        assert_eq!((get(&history, Param::Count), kinds(&history)), (8.0, vec![Param::Opacity, Param::Count]));
     }
 
     #[test]

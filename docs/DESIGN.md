@@ -384,6 +384,7 @@ Figma's defaults, plus Illustrator's letters for the tools Figma lacks.
 | Ctrl+Shift+E | Export |  |  |
 | Esc | Give up the drag, then the tool, then the selection | Arrows / Shift+arrows | Nudge by 1 / 10 |
 | Shift+R | Rulers | Shift+' | Pixel grid |
+| Ctrl+Shift+' | Snapping |  |  |
 
 On the canvas: the wheel pans, Ctrl+wheel or a pinch zooms about the
 pointer, and middle drag or Space+drag pans.

@@ -122,6 +122,8 @@ pub struct Overlay {
     pub handles: Option<[Point; 4]>,
     /// The box being dragged out to select with.
     pub marquee: Option<omavec_geom::kurbo::Rect>,
+    /// What the drag in progress has lined up with.
+    pub guides: Vec<omavec_geom::kurbo::Line>,
 }
 
 pub struct Canvas {
@@ -287,6 +289,9 @@ impl Canvas {
             for corner in corners {
                 painter.rect(Rect::from_center_size(corner, egui::vec2(7.0, 7.0)), 0.0, Color32::WHITE, outline, egui::StrokeKind::Inside);
             }
+        }
+        for guide in &overlay.guides {
+            painter.line_segment([on_screen(guide.p0), on_screen(guide.p1)], egui::Stroke::new(1.0, theme.red));
         }
         if let Some(marquee) = overlay.marquee {
             let area = Rect::from_two_pos(on_screen(marquee.origin()), on_screen(Point::new(marquee.x1, marquee.y1)));

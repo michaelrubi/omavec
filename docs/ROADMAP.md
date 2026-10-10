@@ -277,6 +277,14 @@ reopen and export.
   by Ctrl+Shift+H / Ctrl+Shift+L); reordering by drag and the rest of the
   properties panel are left.
 - Smart guides and snapping: edges, centres, equal spacing, pixel grid.
+  Built so far: a move lines the selection's edges and middle up with
+  those of what is beside it, and of the frame it is in, when they come
+  within six points, and shows a red line through whatever is lined up;
+  a corner or an edge being resized, a shape being drawn and the end of a
+  line do the same. Otherwise they keep to whole units, as Figma's pixel
+  grid does. Ctrl+Shift+' turns both off. The arithmetic is
+  `omavec_geom::snap`. Left: equal spacing; snapping for what is turned,
+  or in a frame that is; and for several nodes resized together.
 - ~~Group (Ctrl+G), frame selection (Ctrl+Alt+G), duplicate (Ctrl+D,
   Alt+drag), copy/paste within Omavec and as SVG to the Wayland clipboard.~~
   (done) Also ungroup (Ctrl+Shift+G), cut, and bring forward, send

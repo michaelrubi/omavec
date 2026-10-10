@@ -4,6 +4,7 @@
 
 use omavec_engine::{Cap, Document, Error, History, Node, NodeId, NodeKind};
 use omavec_geom::kurbo::{Affine, Line, ParamCurveNearest, Point, Rect, Size, Vec2};
+use omavec_geom::snap::{Axis, snap_edge, snap_move};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Tool {
@@ -58,17 +59,20 @@ const CLICK_SIZE: f64 = 100.0;
 enum Drag {
     /// Drawing a new node with `tool` from `start`, in the coordinates of
     /// `parent`.
-    Draw { tool: Tool, parent: NodeId, start: Point, to_parent: Affine, node: Option<NodeId> },
+    /// `snap` is what its corners can line up with, if they can.
+    Draw { tool: Tool, parent: NodeId, start: Point, to_parent: Affine, node: Option<NodeId>, snap: Option<Vec<Rect>> },
     /// Moving the selection: each node with the transform it started with
     /// and the way from the page's coordinates to its parent's.
     /// `deselect` is the selected node that Shift went down on: a click
     /// takes it out of the selection, a drag moves it with the rest.
-    Move { start: Point, nodes: Vec<(NodeId, Affine, Affine)>, moved: bool, deselect: Option<NodeId> },
+    /// `snap` is the box round them as the drag began and what it can line
+    /// up with, if it can.
+    Move { start: Point, nodes: Vec<(NodeId, Affine, Affine)>, moved: bool, deselect: Option<NodeId>, snap: Option<(Rect, Vec<Rect>)> },
     /// Resizing `node` by one of its handles: the transform and size it
     /// started with, and the way from the page to its own coordinates then.
     /// `offset` is from where the pointer took the handle to the handle
     /// itself, so the box doesn't jump to the pointer.
-    Resize { node: NodeId, handle: Handle, began: Affine, size: Size, to_local: Affine, offset: Vec2, moved: bool },
+    Resize { node: NodeId, handle: Handle, began: Affine, size: Size, to_local: Affine, offset: Vec2, moved: bool, snap: Option<Vec<Rect>> },
     /// Resizing several nodes, or a group, by a handle of the box round
     /// them: the document and the box (`area`, in coordinates that
     /// `to_page` takes to the page) as they were, to start again from at
@@ -85,7 +89,7 @@ enum Drag {
     /// (in the coordinates of the line's parent, which `to_parent` gives
     /// from the page's); `start` says whether it is the line's start that
     /// moves.
-    End { node: NodeId, start: bool, fixed: Point, to_parent: Affine, moved: bool },
+    End { node: NodeId, start: bool, fixed: Point, to_parent: Affine, moved: bool, snap: Option<Vec<Rect>> },
 }
 
 /// What the pointer would take hold of on the box round the selection.
@@ -101,14 +105,59 @@ pub enum Grab {
 /// four corners and the four edges.
 pub type Handle = (f64, f64);
 
-#[derive(Default)]
 pub struct Tools {
     pub tool: Tool,
     pub selection: Vec<NodeId>,
     /// How near the pointer must be to a handle to take it, in page units:
-    /// a few pixels at the canvas's zoom.
+    /// a few pixels at the canvas's zoom. It is also how near a dragged
+    /// edge must come to another node's to line up with it.
     pub grab: f64,
+    /// Whether what is dragged lines up with its neighbours, and otherwise
+    /// keeps to whole units.
+    pub snap: bool,
+    /// The lines that show what the drag in progress has lined up with.
+    pub guides: Vec<Line>,
     drag: Option<Drag>,
+}
+
+impl Default for Tools {
+    fn default() -> Self {
+        Self { tool: Tool::Move, selection: Vec::new(), grab: 0.0, snap: true, guides: Vec::new(), drag: None }
+    }
+}
+
+/// The boxes on the page that something in `parent` can line up with: the
+/// other things in `parent`, and `parent` itself if it is a frame.
+fn neighbours(document: &Document, parent: NodeId, except: &[NodeId]) -> Vec<Rect> {
+    let Some(node) = document.node(parent) else { return Vec::new() };
+    let mut boxes: Vec<Rect> = node.children.iter().filter(|child| child.visible && !except.contains(&child.id)).filter_map(|child| document.area(&[child.id])).collect();
+    if matches!(node.kind, NodeKind::Frame { .. }) {
+        boxes.extend(document.area(&[parent]));
+    }
+    boxes
+}
+
+/// Whether `transform` only moves things: boxes that are turned or scaled
+/// have no edges that a whole number or a guide would suit.
+fn only_moves(transform: Affine) -> bool {
+    transform.as_coeffs()[..4] == [1.0, 0.0, 0.0, 1.0]
+}
+
+/// Where a corner or an edge dragged to `at` (on the page) should go: on
+/// each of `axes` that it moves along, onto a line of one of `others` within
+/// `reach`, or else onto a whole number. With the guides that show why.
+fn snapped(at: Point, axes: (bool, bool), others: &[Rect], reach: f64) -> (Point, Vec<Line>) {
+    let mut guides = Vec::new();
+    let mut along = |value: f64, axis: Axis, across: f64| match snap_edge(value, axis, (across, across), others, reach) {
+        Some((to, guide)) => {
+            guides.push(guide);
+            to
+        }
+        None => value.round(),
+    };
+    let x = if axes.0 { along(at.x, Axis::X, at.y) } else { at.x };
+    let y = if axes.1 { along(at.y, Axis::Y, at.x) } else { at.y };
+    (Point::new(x, y), guides)
 }
 
 /// The box from `start` to `to`: a square with Shift, and with Alt grown
@@ -313,7 +362,9 @@ impl Tools {
                 let frame = chain.iter().rev().copied().find(|id| document.node(*id).is_some_and(|node| matches!(node.kind, NodeKind::Frame { .. })));
                 let parent = frame.unwrap_or(page);
                 let to_parent = document.to_page(parent).unwrap_or_default().inverse();
-                Some(Drag::Draw { tool: self.tool, parent, start: to_parent * at, to_parent, node: None })
+                let snap = (self.snap && only_moves(to_parent)).then(|| neighbours(document, parent, &[]));
+                let at = snap.as_ref().map_or(at, |others| snapped(at, (true, true), others, self.grab).0);
+                Some(Drag::Draw { tool: self.tool, parent, start: to_parent * at, to_parent, node: None, snap })
             }
             None => {
                 // A handle of the selection's box comes before whatever is under it.
@@ -323,14 +374,16 @@ impl Tools {
                         [one] => document.node(one).filter(|node| node.kind != NodeKind::Group),
                         _ => None,
                     };
-                    let to_parent = document.parent(self.selection[0]).and_then(|parent| document.to_page(parent)).unwrap_or_default().inverse();
+                    let parent = document.parent(self.selection[0]).unwrap_or(page);
+                    let to_parent = document.to_page(parent).unwrap_or_default().inverse();
+                    let snap = (self.snap && only_moves(to_page)).then(|| neighbours(document, parent, &self.selection));
                     self.drag = Some(match (grab, one) {
                         (Grab::Resize(handle), Some(node)) if node.kind == NodeKind::Line => {
                             // The end that stays is the one the handle isn't on.
                             let fixed = node.transform * Point::new((1.0 - handle.0) * node.size.width, 0.0);
-                            Drag::End { node: node.id, start: handle.0 == 0.0, fixed, to_parent, moved: false }
+                            Drag::End { node: node.id, start: handle.0 == 0.0, fixed, to_parent, moved: false, snap: snap.filter(|_| only_moves(to_parent)) }
                         }
-                        (Grab::Resize(handle), Some(node)) => Drag::Resize { node: node.id, handle, began: node.transform, size: node.size, to_local: to_page.inverse(), offset: held(handle), moved: false },
+                        (Grab::Resize(handle), Some(node)) => Drag::Resize { node: node.id, handle, began: node.transform, size: node.size, to_local: to_page.inverse(), offset: held(handle), moved: false, snap },
                         (Grab::Resize(handle), None) => Drag::Stretch { began: document.clone(), handle, to_page, area, offset: held(handle), moved: false },
                         (Grab::Rotate, _) => {
                             let centre = to_page * area.center();
@@ -358,7 +411,11 @@ impl Tools {
                     self.selection.clone_from(&kept);
                     Some(Drag::Marquee { page, start: at, to: at, kept, click: background, moved: false })
                 } else {
-                    Some(Drag::Move { start: at, nodes: starts(document, &self.selection), moved: false, deselect })
+                    let nodes = starts(document, &self.selection);
+                    // Lining up is with what is beside the first of them.
+                    let beside = nodes.first().filter(|(_, _, to_parent)| self.snap && only_moves(*to_parent)).and_then(|(first, ..)| document.parent(*first));
+                    let snap = beside.and_then(|parent| Some((document.area(&self.selection)?, neighbours(document, parent, &self.selection))));
+                    Some(Drag::Move { start: at, nodes, moved: false, deselect, snap })
                 }
             }
         };
@@ -367,7 +424,15 @@ impl Tools {
     /// The pointer moved to `at` with the button held.
     pub fn drag(&mut self, history: &mut History, at: Point, keys: Keys) -> Result<(), Error> {
         match &mut self.drag {
-            Some(Drag::Draw { tool, parent, start, to_parent, node }) => {
+            Some(Drag::Draw { tool, parent, start, to_parent, node, snap }) => {
+                let at = match snap {
+                    Some(others) => {
+                        let (at, guides) = snapped(at, (true, true), others, self.grab);
+                        self.guides = guides;
+                        at
+                    }
+                    None => at,
+                };
                 let (transform, size) = placed(*tool, *start, *to_parent * at, keys);
                 let (tool, parent) = (*tool, *parent);
                 if node.is_none() {
@@ -390,11 +455,19 @@ impl Tools {
                 *node = Some(drawing);
                 self.selection = vec![drawing];
             }
-            Some(Drag::End { node, start, fixed, to_parent, moved }) => {
+            Some(Drag::End { node, start, fixed, to_parent, moved, snap }) => {
                 if !*moved {
                     history.begin("Resize");
                     *moved = true;
                 }
+                let at = match snap {
+                    Some(others) => {
+                        let (at, guides) = snapped(at, (true, true), others, self.grab);
+                        self.guides = guides;
+                        at
+                    }
+                    None => at,
+                };
                 let end = *to_parent * at;
                 // A line starts at its origin: Shift's angle is about the end that stays.
                 let (transform, size) = if *start {
@@ -410,7 +483,7 @@ impl Tools {
                     Ok(())
                 })?;
             }
-            Some(Drag::Move { start, nodes, moved, .. }) => {
+            Some(Drag::Move { start, nodes, moved, snap, .. }) => {
                 if !*moved {
                     history.begin(if keys.alt { "Duplicate" } else { "Move" });
                     *moved = true;
@@ -423,8 +496,23 @@ impl Tools {
                 }
                 let mut by = at - *start;
                 // Shift keeps the move along whichever axis it is mostly on.
+                let mut free = (true, true);
                 if keys.shift {
-                    by = if by.x.abs() >= by.y.abs() { Vec2::new(by.x, 0.0) } else { Vec2::new(0.0, by.y) };
+                    free = (by.x.abs() >= by.y.abs(), by.x.abs() < by.y.abs());
+                    by = if free.0 { Vec2::new(by.x, 0.0) } else { Vec2::new(0.0, by.y) };
+                }
+                if let Some((area, others)) = snap {
+                    let lined = snap_move(*area + by, others, self.grab);
+                    // Along an axis with nothing to line up with, the box's
+                    // corner keeps to whole units.
+                    let upright = |guide: &Line| guide.p0.x == guide.p1.x;
+                    let whole = |corner: f64| corner.round() - corner;
+                    let moved = *area + by;
+                    let x = if lined.guides.iter().any(upright) { lined.by.x } else { whole(moved.x0) };
+                    let y = if lined.guides.iter().any(|guide| !upright(guide)) { lined.by.y } else { whole(moved.y0) };
+                    by += Vec2::new(if free.0 { x } else { 0.0 }, if free.1 { y } else { 0.0 });
+                    // The lines for where it has ended up, whole units and all.
+                    self.guides = snap_move(*area + by, others, 0.0).guides.into_iter().filter(|guide| if upright(guide) { free.0 } else { free.1 }).collect();
                 }
                 history.edit("Move", |document| {
                     for (id, began, to_parent) in nodes.iter() {
@@ -434,12 +522,22 @@ impl Tools {
                     Ok(())
                 })?;
             }
-            Some(Drag::Resize { node, handle, began, size, to_local, offset, moved }) => {
+            Some(Drag::Resize { node, handle, began, size, to_local, offset, moved, snap }) => {
                 if !*moved {
                     history.begin("Resize");
                     *moved = true;
                 }
-                let area = resized(*size, *handle, *to_local * at + *offset, keys);
+                // The side of the box that the handle is on goes to the
+                // pointer, less the bit it was taken off by.
+                let to = match snap {
+                    Some(others) => {
+                        let (to, guides) = snapped(at + *offset, (handle.0 != 0.5, handle.1 != 0.5), others, self.grab);
+                        self.guides = guides;
+                        *to_local * to
+                    }
+                    None => *to_local * at + *offset,
+                };
+                let area = resized(*size, *handle, to, keys);
                 history.edit("Resize", |document| {
                     let shape = document.node_mut(*node)?;
                     (shape.transform, shape.size) = (*began * Affine::translate(area.origin().to_vec2()), area.size());
@@ -509,6 +607,7 @@ impl Tools {
 
     /// The button came up.
     pub fn release(&mut self, history: &mut History) -> Result<(), Error> {
+        self.guides.clear();
         match self.drag.take() {
             // A click with a drawing tool: a shape of the usual size, there.
             Some(Drag::Draw { tool, parent, start, node: None, .. }) => {
@@ -543,6 +642,7 @@ impl Tools {
     /// Esc: gives up the drag in progress, or else the drawing tool, or
     /// else the selection.
     pub fn cancel(&mut self, history: &mut History) {
+        self.guides.clear();
         match self.drag.take() {
             Some(Drag::Draw { node, .. }) => {
                 history.cancel();
@@ -1209,5 +1309,59 @@ mod tests {
         desk.history.edit("Flat", |document| document.node_mut(line).map(|node| (node.transform, node.size) = (Affine::translate((0.0, 0.0)), Size::new(100.0, 0.0)))).unwrap();
         desk.stroke((50.0, 1.0), &[(60.0, 21.0)], Keys::default());
         assert!(near(ends(&desk, line), ((10.0, 20.0), (110.0, 20.0))), "{:?}", ends(&desk, line));
+    }
+
+    #[test]
+    fn what_is_dragged_lines_up_with_its_neighbours_or_keeps_to_whole_units() {
+        let mut desk = Desk::new();
+        let still = desk.draw(Tool::Rectangle, (100.0, 200.0), (180.0, 260.0));
+        let moving = desk.draw(Tool::Rectangle, (300.0, 40.0), (350.0, 70.0));
+        desk.tools.grab = 5.0;
+        let none = Keys::default();
+        // Dragged to within reach of the other's left edge: onto it, with a
+        // line down both to show it. Up and down there is nothing near, so
+        // it keeps to whole units.
+        desk.tools.press(&desk.history, desk.page, (320.0, 50.0).into(), none);
+        desk.tools.drag(&mut desk.history, (123.0, 60.4).into(), none).unwrap();
+        assert_eq!(desk.bounds(moving), Rect::new(100.0, 50.0, 150.0, 80.0));
+        assert_eq!(desk.tools.guides, [Line::new((100.0, 50.0), (100.0, 260.0))]);
+        // Further on, out of reach: where the pointer says, to the unit.
+        desk.tools.drag(&mut desk.history, (140.3, 60.0).into(), none).unwrap();
+        assert_eq!((desk.bounds(moving), desk.tools.guides.len()), (Rect::new(120.0, 50.0, 170.0, 80.0), 0));
+        // Its middle onto the other's, and its top onto the other's bottom.
+        desk.tools.drag(&mut desk.history, (137.0, 272.0).into(), none).unwrap();
+        assert_eq!(desk.bounds(moving), Rect::new(115.0, 260.0, 165.0, 290.0));
+        assert_eq!(desk.tools.guides.len(), 2);
+        // The guides go when the button does.
+        desk.tools.release(&mut desk.history).unwrap();
+        assert!(desk.tools.guides.is_empty());
+
+        // An edge dragged near the other's right edge takes to it.
+        desk.tools.selection = vec![moving];
+        desk.stroke((165.0, 275.0), &[(177.6, 275.0)], none);
+        assert_eq!(desk.bounds(moving), Rect::new(115.0, 260.0, 180.0, 290.0));
+        // A new shape starts and ends on whole units, or on a neighbour.
+        desk.tools.tool = Tool::Ellipse;
+        desk.stroke((10.4, 10.6), &[(98.0, 55.5)], none);
+        assert_eq!(desk.bounds(desk.tools.selection[0]), Rect::new(10.0, 11.0, 100.0, 56.0));
+
+        // With snapping off, everything goes exactly where the pointer does.
+        desk.tools.snap = false;
+        desk.tools.selection = vec![moving];
+        desk.stroke((140.0, 275.0), &[(142.5, 275.25)], none);
+        assert_eq!((desk.bounds(moving), desk.bounds(still)), (Rect::new(117.5, 260.25, 182.5, 290.25), Rect::new(100.0, 200.0, 180.0, 260.0)));
+    }
+
+    #[test]
+    fn a_move_kept_to_one_axis_lines_up_along_that_axis_only() {
+        let mut desk = Desk::new();
+        desk.draw(Tool::Rectangle, (100.0, 200.0), (180.0, 260.0));
+        let moving = desk.draw(Tool::Rectangle, (300.0, 197.0), (350.0, 230.0));
+        desk.tools.grab = 5.0;
+        // Sideways with Shift: its top is 3 from the other's, and stays so.
+        desk.tools.press(&desk.history, desk.page, (320.0, 210.0).into(), Keys::default());
+        desk.tools.drag(&mut desk.history, (201.0, 212.0).into(), Keys { shift: true, ..Keys::default() }).unwrap();
+        assert_eq!(desk.bounds(moving), Rect::new(180.0, 197.0, 230.0, 230.0));
+        assert_eq!(desk.tools.guides, [Line::new((180.0, 197.0), (180.0, 260.0))]);
     }
 }

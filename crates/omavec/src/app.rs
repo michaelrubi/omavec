@@ -382,6 +382,10 @@ impl App {
             }
             Command::ToggleRulers => self.canvas.rulers = !self.canvas.rulers,
             Command::TogglePixelGrid => self.canvas.pixel_grid = !self.canvas.pixel_grid,
+            Command::ToggleSnap => {
+                self.tools.snap = !self.tools.snap;
+                self.say(if self.tools.snap { "Snapping on" } else { "Snapping off" }, false);
+            }
             Command::ToggleUi => self.show_ui = !self.show_ui,
         }
     }
@@ -402,7 +406,7 @@ impl App {
             ("File", &[Command::New, Command::Open, Command::Save, Command::SaveAs, Command::Export, Command::Quit]),
             ("Edit", &[Command::Undo, Command::Redo, Command::Cut, Command::Copy, Command::Paste, Command::Duplicate, Command::Delete, Command::SelectAll, Command::SelectChildren, Command::SelectParent]),
             ("Object", &[Command::Group, Command::Ungroup, Command::FrameSelection, Command::BringToFront, Command::BringForward, Command::SendBackward, Command::SendToBack, Command::ToggleVisible, Command::ToggleLocked]),
-            ("View", &[Command::ZoomIn, Command::ZoomOut, Command::ZoomTo100, Command::ZoomToFit, Command::ZoomToSelection, Command::ToggleRulers, Command::TogglePixelGrid, Command::ToggleUi]),
+            ("View", &[Command::ZoomIn, Command::ZoomOut, Command::ZoomTo100, Command::ZoomToFit, Command::ZoomToSelection, Command::ToggleRulers, Command::TogglePixelGrid, Command::ToggleSnap, Command::ToggleUi]),
         ];
         egui::MenuBar::new().ui(ui, |ui| {
             for (menu, commands) in MENUS {
@@ -555,7 +559,7 @@ impl App {
         }
         let document = self.history.document();
         let handles = self.tools.frame(document).map(|(to_page, area)| [(area.x0, area.y0), (area.x1, area.y0), (area.x1, area.y1), (area.x0, area.y1)].map(|corner| to_page * Point::from(corner)));
-        let overlay = Overlay { outlines: self.corners(&self.tools.selection), handles, marquee: self.tools.marquee() };
+        let overlay = Overlay { outlines: self.corners(&self.tools.selection), handles, marquee: self.tools.marquee(), guides: self.tools.guides.clone() };
         self.canvas.hand = self.tools.tool == Tool::Hand;
         let (rect, pointer) = egui::CentralPanel::no_frame().show(ui, |ui| self.canvas.show(ui, &self.theme, &overlay)).inner;
         let keys = ui.input(|i| Keys { shift: i.modifiers.shift, alt: i.modifiers.alt, ctrl: i.modifiers.command });

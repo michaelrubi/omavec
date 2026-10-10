@@ -49,13 +49,14 @@ pub enum Command {
     ZoomToSelection,
     ToggleRulers,
     TogglePixelGrid,
+    ToggleSnap,
     ToggleUi,
     ToggleVisible,
     ToggleLocked,
 }
 
 impl Command {
-    pub const ALL: [Command; 47] = [
+    pub const ALL: [Command; 48] = [
         Command::New,
         Command::Open,
         Command::Save,
@@ -100,6 +101,7 @@ impl Command {
         Command::ZoomToSelection,
         Command::ToggleRulers,
         Command::TogglePixelGrid,
+        Command::ToggleSnap,
         Command::ToggleUi,
         Command::ToggleVisible,
         Command::ToggleLocked,
@@ -151,6 +153,7 @@ impl Command {
             Command::ZoomToSelection => "Zoom to Selection",
             Command::ToggleRulers => "Rulers",
             Command::TogglePixelGrid => "Pixel Grid",
+            Command::ToggleSnap => "Snapping",
             Command::ToggleUi => "Show/Hide UI",
             Command::ToggleVisible => "Show/Hide Selection",
             Command::ToggleLocked => "Lock/Unlock Selection",
@@ -206,6 +209,7 @@ impl Command {
             Command::ZoomToSelection => (Modifiers::SHIFT, Key::Num2),
             Command::ToggleRulers => (Modifiers::SHIFT, Key::R),
             Command::TogglePixelGrid => (Modifiers::SHIFT, Key::Quote),
+            Command::ToggleSnap => (both, Key::Quote),
             Command::ToggleUi => (Modifiers::COMMAND, Key::Backslash),
             Command::ToggleVisible => (both, Key::H),
             Command::ToggleLocked => (both, Key::L),

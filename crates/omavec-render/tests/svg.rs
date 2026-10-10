@@ -217,3 +217,31 @@ fn strokes_render_identically_on_every_side_of_the_edge() {
 
     assert_svg_matches_render("strokes", &document, frame_id);
 }
+
+#[test]
+fn a_clipping_frame_and_a_faded_group_render_identically() {
+    let mut document = Document::default();
+    let page = document.pages[0].id;
+    let mut add = |parent: NodeId, kind: NodeKind, transform: Affine, size: (f64, f64), fill: Option<Color>| {
+        let mut node = document.create(kind, Size::new(size.0, size.1));
+        node.transform = transform;
+        node.fills = fill.into_iter().map(Paint::solid).collect();
+        let id = node.id;
+        document.insert(parent, usize::MAX, node).unwrap();
+        id
+    };
+    let frame_id = add(page, NodeKind::Frame { clip: true }, Affine::translate((25.0, 15.0)), (320.0, 240.0), Some(Color::rgb(0xff, 0xff, 0xff)));
+    // A turned frame that clips, with an ellipse and a bar sticking out of it.
+    let inner = add(frame_id, NodeKind::Frame { clip: true }, Affine::translate((60.0, 30.0)) * Affine::rotate(0.3), (140.0, 90.0), Some(Color::rgb(0xf1, 0xfa, 0xee)));
+    add(inner, NodeKind::Ellipse, Affine::translate((90.0, 40.0)), (100.0, 100.0), Some(Color::rgb(0xe6, 0x39, 0x46)));
+    add(inner, NodeKind::Rectangle, Affine::translate((-30.0, 20.0)), (80.0, 20.0), Some(Color::rgb(0x1d, 0x35, 0x57)));
+    // A group at 60%, with two shapes that overlap, half off the outer frame.
+    let group = add(frame_id, NodeKind::Group, Affine::translate((200.0, 150.0)), (0.0, 0.0), None);
+    add(group, NodeKind::Rectangle, Affine::IDENTITY, (90.0, 60.0), Some(Color::rgb(0x2a, 0x9d, 0x8f)));
+    add(group, NodeKind::Ellipse, Affine::translate((50.0, 20.0)), (120.0, 90.0), Some(Color::rgb(0xe9, 0xc4, 0x6a)));
+    document.node_mut(group).unwrap().opacity = 0.6;
+    // And the turned frame's stroke, outside it and so outside its clip.
+    document.node_mut(inner).unwrap().stroke = omavec_engine::Stroke { paints: vec![Paint::solid(Color::rgb(0, 0, 0))], weight: 4.0, align: omavec_engine::Align::Outside };
+
+    assert_svg_matches_render("a_clipping_frame_and_a_faded_group", &document, frame_id);
+}

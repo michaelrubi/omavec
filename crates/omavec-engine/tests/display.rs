@@ -1,6 +1,6 @@
 //! A page flattened into what the renderer draws.
 
-use omavec_engine::display::DisplayList;
+use omavec_engine::display::{DisplayList, Item};
 use omavec_engine::{Color, Document, NodeId, NodeKind, Paint};
 use omavec_geom::kurbo::{Affine, Rect, Shape, Size};
 
@@ -21,13 +21,29 @@ fn rgba(color: Color, alpha: u8) -> [u8; 4] {
     [color.r, color.g, color.b, alpha]
 }
 
-/// Each item's colour and bounds, back to front.
+/// Each fill's colour and bounds, back to front.
 fn drawn(document: &Document) -> Vec<([u8; 4], Rect)> {
-    let colour = |item: &omavec_engine::display::Item| {
-        let c = item.color.to_rgba8();
-        [c.r, c.g, c.b, c.a]
+    let fill = |item: &Item| match item {
+        Item::Fill(fill) => {
+            let c = fill.color.to_rgba8();
+            Some(([c.r, c.g, c.b, c.a], fill.bounds()))
+        }
+        _ => None,
     };
-    DisplayList::of(&document.pages[0]).items.iter().map(|item| (colour(item), item.bounds())).collect()
+    DisplayList::of(&document.pages[0]).items.iter().filter_map(fill).collect()
+}
+
+/// The list as letters: `f` a fill, `[` and `]` round what is clipped, `(`
+/// and `)` round what fades together.
+fn steps(document: &Document) -> String {
+    let letter = |item: &Item| match item {
+        Item::Fill(_) => 'f',
+        Item::Clip(_) => '[',
+        Item::Unclip => ']',
+        Item::Fade(_) => '(',
+        Item::Unfade => ')',
+    };
+    DisplayList::of(&document.pages[0]).items.iter().map(letter).collect()
 }
 
 #[test]
@@ -70,9 +86,10 @@ fn an_ellipse_is_an_ellipse() {
     let page = document.pages[0].id;
     add(&mut document, page, NodeKind::Ellipse, (10.0, 20.0), (200.0, 100.0), RED);
     let list = DisplayList::of(&document.pages[0]);
-    let path = &list.items[0].path;
+    let Item::Fill(fill) = &list.items[0] else { panic!() };
+    let path = &fill.path;
     assert!((path.area().abs() - std::f64::consts::PI * 100.0 * 50.0).abs() < 1.0, "{}", path.area());
-    assert!((list.items[0].bounds().x0 - 10.0).abs() < 1e-3 && (list.items[0].bounds().y1 - 120.0).abs() < 1e-3);
+    assert!((fill.bounds().x0 - 10.0).abs() < 1e-3 && (fill.bounds().y1 - 120.0).abs() < 1e-3);
     // The corners of its box are outside it; the middle is inside.
     assert_ne!(path.winding((110.0, 70.0).into()), 0);
     assert_eq!(path.winding((12.0, 22.0).into()), 0);
@@ -101,15 +118,46 @@ fn hidden_nodes_and_hidden_fills_are_left_out() {
 }
 
 #[test]
-fn opacity_carries_down_to_what_is_inside() {
+fn a_nodes_opacity_fades_all_of_it_together() {
     let mut document = Document::default();
     let page = document.pages[0].id;
     let frame = add(&mut document, page, NodeKind::Frame { clip: false }, (0.0, 0.0), (100.0, 100.0), BLUE);
     let rectangle = add(&mut document, frame, NodeKind::Rectangle, (0.0, 0.0), (10.0, 10.0), RED);
     document.node_mut(frame).unwrap().opacity = 0.5;
     document.node_mut(rectangle).unwrap().opacity = 0.5;
+    // The frame and what is in it are drawn as they are and faded as one.
+    // The rectangle is one fill, so it is simply half as strong.
+    assert_eq!(steps(&document), "(ff)");
     let colours: Vec<[u8; 4]> = drawn(&document).into_iter().map(|(colour, _)| colour).collect();
-    assert_eq!(colours, [rgba(BLUE, 128), rgba(RED, 64)]);
+    assert_eq!(colours, [rgba(BLUE, 255), rgba(RED, 128)]);
+    let Item::Fade(opacity) = DisplayList::of(&document.pages[0]).items[0] else { panic!() };
+    assert_eq!(opacity, 0.5);
+    // Two fills on one node fade together too.
+    document.node_mut(rectangle).unwrap().fills.push(Paint::solid(BLUE));
+    assert_eq!(steps(&document), "(f(ff))");
+    // At full strength nothing needs doing.
+    document.node_mut(frame).unwrap().opacity = 1.0;
+    document.node_mut(rectangle).unwrap().opacity = 1.0;
+    assert_eq!(steps(&document), "fff");
+}
+
+#[test]
+fn a_frame_that_clips_does_so_round_its_children_only() {
+    let mut document = Document::default();
+    let page = document.pages[0].id;
+    let frame = add(&mut document, page, NodeKind::Frame { clip: true }, (10.0, 20.0), (100.0, 50.0), BLUE);
+    // Nothing in it: nothing to clip.
+    assert_eq!(steps(&document), "f");
+    add(&mut document, frame, NodeKind::Rectangle, (90.0, 40.0), (30.0, 30.0), RED);
+    document.node_mut(frame).unwrap().stroke = omavec_engine::Stroke { paints: vec![Paint::solid(RED)], weight: 4.0, align: omavec_engine::Align::Outside };
+    // Its fill, its children inside the clip, then its stroke outside it.
+    assert_eq!(steps(&document), "f[f]f");
+    let list = DisplayList::of(&document.pages[0]);
+    let Item::Clip(clip) = &list.items[1] else { panic!() };
+    assert_eq!(clip.bounding_box(), Rect::new(10.0, 20.0, 110.0, 70.0));
+    // One that doesn't clip, and a group, are just what is in them.
+    document.node_mut(frame).unwrap().kind = NodeKind::Frame { clip: false };
+    assert_eq!(steps(&document), "fff");
 }
 
 #[test]

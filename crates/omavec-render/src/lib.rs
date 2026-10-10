@@ -6,7 +6,7 @@
 
 pub mod spike;
 
-pub use omavec_engine::display::{DisplayList, Item};
+pub use omavec_engine::display::{DisplayList, Fill, Item};
 pub use peniko;
 
 use kurbo::{Affine, Rect};
@@ -50,13 +50,20 @@ impl Renderer {
         self.context.fill_rect(&screen);
         self.context.set_transform(view);
         for item in &list.items {
-            // vello_cpu keeps no scene between frames, so every path it's
-            // given is processed again: skip the ones off screen.
-            if view.transform_rect_bbox(item.bounds()).intersect(screen).is_zero_area() {
-                continue;
+            match item {
+                Item::Fill(fill) => {
+                    // vello_cpu keeps no scene between frames, so every path
+                    // it's given is processed again: skip the ones off screen.
+                    if !view.transform_rect_bbox(fill.bounds()).intersect(screen).is_zero_area() {
+                        self.context.set_paint(fill.color);
+                        self.context.fill_path(&fill.path);
+                    }
+                }
+                Item::Clip(path) => self.context.push_clip_path(path),
+                Item::Unclip => self.context.pop_clip(),
+                Item::Fade(opacity) => self.context.push_opacity_layer(*opacity),
+                Item::Unfade => self.context.pop_layer(),
             }
-            self.context.set_paint(item.color);
-            self.context.fill_path(&item.path);
         }
         self.context.flush();
         let mut pixmap = Pixmap::new(width, height);
@@ -120,6 +127,48 @@ mod tests {
         assert_eq!(pixel(&frame, 40, 20), [0xd9, 0xd9, 0xd9, 255], "the middle of the ellipse");
         assert_eq!(pixel(&frame, 31, 11), [255, 255, 255, 255], "the frame, in the corner of the ellipse's box");
         assert_eq!(pixel(&frame, 55, 20), [40, 40, 40, 255], "past the frame");
+    }
+
+    #[test]
+    fn a_frame_clips_its_children_and_a_group_fades_as_one() {
+        use omavec_engine::{Document, NodeId, NodeKind, Paint};
+        let mut document = Document::default();
+        let page = document.pages[0].id;
+        let mut add = |parent: NodeId, kind: NodeKind, at: (f64, f64), size: (f64, f64), fill: Option<[u8; 3]>| {
+            let mut node = document.create(kind, size.into());
+            node.transform = Affine::translate(at);
+            node.fills = fill.into_iter().map(|[r, g, b]| Paint::solid(omavec_engine::Color::rgb(r, g, b))).collect();
+            let id = node.id;
+            document.insert(parent, usize::MAX, node).unwrap();
+            id
+        };
+        // A white frame at 10..50 by 10..30 with a red bar through it, 40..60
+        // by 0..40.
+        let frame = add(page, NodeKind::Frame { clip: true }, (10.0, 10.0), (40.0, 20.0), Some([255, 255, 255]));
+        add(frame, NodeKind::Rectangle, (30.0, -10.0), (20.0, 40.0), Some([255, 0, 0]));
+        // A group with red at 0..20 and blue over it at 10..30, down at 50..60.
+        let group = add(page, NodeKind::Group, (0.0, 50.0), (0.0, 0.0), None);
+        add(group, NodeKind::Rectangle, (0.0, 0.0), (20.0, 10.0), Some([255, 0, 0]));
+        add(group, NodeKind::Rectangle, (10.0, 0.0), (20.0, 10.0), Some([0, 0, 255]));
+
+        let draw = |document: &Document| Renderer::default().render(&DisplayList::of(&document.pages[0]), Affine::IDENTITY, 64, 64, Color::WHITE);
+        let drawn = draw(&document);
+        assert_eq!(pixel(&drawn, 45, 20), [255, 0, 0, 255], "the bar, in the frame");
+        assert_eq!(pixel(&drawn, 45, 5), [255, 255, 255, 255], "the bar, cut off above the frame");
+        assert_eq!(pixel(&drawn, 55, 20), [255, 255, 255, 255], "and to its right");
+        assert_eq!(pixel(&drawn, 15, 55), [0, 0, 255, 255], "blue over red");
+
+        document.node_mut(frame).unwrap().kind = NodeKind::Frame { clip: false };
+        document.node_mut(group).unwrap().opacity = 0.5;
+        let drawn = draw(&document);
+        assert_eq!(pixel(&drawn, 45, 5), [255, 0, 0, 255], "the bar, no longer cut off");
+        assert_eq!(pixel(&drawn, 55, 20), [255, 0, 0, 255]);
+        // Half of what the group looked like: red alone, then blue with no
+        // red showing through it.
+        let near = |a: [u8; 4], b: [u8; 4]| a.iter().zip(b).all(|(a, b)| a.abs_diff(b) <= 1);
+        assert!(near(pixel(&drawn, 5, 55), [255, 128, 128, 255]), "{:?}", pixel(&drawn, 5, 55));
+        assert!(near(pixel(&drawn, 15, 55), [128, 128, 255, 255]), "{:?}", pixel(&drawn, 15, 55));
+        assert!(near(pixel(&drawn, 25, 55), [128, 128, 255, 255]), "{:?}", pixel(&drawn, 25, 55));
     }
 
     #[test]

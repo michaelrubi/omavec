@@ -146,7 +146,7 @@ fn write_node(node: &Node, indent: usize, out: &mut String) {
         let child_indent = if has_g { indent + 2 } else { indent };
 
         let mut body = String::new();
-        write_inside(node, child_indent, &mut body);
+        write_inside(node, child_indent, false, &mut body);
 
         if !body.is_empty() {
             if has_g {
@@ -183,13 +183,26 @@ fn write_node(node: &Node, indent: usize, out: &mut String) {
 }
 
 /// What is inside a frame, a group or the root, at its own origin: its
-/// fills, its children, then its stroke over them.
-fn write_inside(node: &Node, indent: usize, out: &mut String) {
+/// fills, its children, then its stroke over them. A frame that clips does
+/// so round its children, unless `clipped` already (the root, which the
+/// picture's own edge clips).
+fn write_inside(node: &Node, indent: usize, clipped: bool, out: &mut String) {
     for piece in pieces(node, false) {
         write_element(out, indent, node, None, piece, None);
     }
+    let clip = !clipped && matches!(node.kind, NodeKind::Frame { clip: true });
+    let mut children = String::new();
     for child in &node.children {
-        write_node(child, indent, out);
+        write_node(child, if clip { indent + 2 } else { indent }, &mut children);
+    }
+    if clip && !children.is_empty() {
+        let id = node.id.0;
+        let _ = writeln!(out, "{:indent$}<clipPath id=\"clip{id}\"><rect width=\"{}\" height=\"{}\"/></clipPath>", "", num(node.size.width), num(node.size.height));
+        let _ = writeln!(out, "{:indent$}<g clip-path=\"url(#clip{id})\">", "");
+        out.push_str(&children);
+        let _ = writeln!(out, "{:indent$}</g>", "");
+    } else {
+        out.push_str(&children);
     }
     for piece in pieces(node, true) {
         write_element(out, indent, node, None, piece, None);
@@ -205,7 +218,7 @@ pub fn write(document: &Document, id: NodeId) -> Result<String, Error> {
     let (width, height) = (num(area.width()), num(area.height()));
     let mut out = format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"{corner} {width} {height}\">\n");
     if node.visible {
-        write_inside(node, 2, &mut out);
+        write_inside(node, 2, true, &mut out);
     }
     out.push_str("</svg>\n");
     Ok(out)

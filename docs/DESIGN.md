@@ -205,6 +205,15 @@ engine document ──► display list ──► omavec-render ──► frame (
 - `vello_cpu` keeps no scene between frames, so the renderer skips what is
   off screen before drawing; that is most of the cost of a zoomed-in view.
 - Nothing is drawn while nothing changes: an idle canvas uses no CPU.
+- The display list is fills between two kinds of bracket. `Clip` … `Unclip`
+  goes round the children of a frame that clips (not its own fill or
+  stroke, which may sit outside its edge) and becomes `vello_cpu`'s
+  `push_clip_path`. `Fade` … `Unfade` goes round a node whose opacity is
+  below 1 and which draws more than one thing (two paints, or children),
+  and becomes an opacity layer, so where its parts overlap neither shows
+  through the other. A node with one paint and nothing else is just that
+  much fainter, with no layer. SVG says the same things with `clip-path`
+  and group `opacity`, and a test holds the two renderings together.
 - Headless export (CLI, tests) uses the same renderer on the calling
   thread, so an export is what the canvas showed. Golden images need no
   GPU.
@@ -406,7 +415,8 @@ each crate's `examples/`.
 
 ### Canvas renderer: `vello_cpu`
 
-`cargo run --release -p omavec-render --example canvas_bench` draws 10,000
+`examples/canvas_bench.rs` (deleted with its `vello` dependency once the
+canvas could draw documents; it is in the history at `ba407d5`) drew 10,000
 random cubic blobs (translucent, overlapping, scattered over 8,000 units)
 into a 2560 × 1440 frame with both renderers and takes the median of 30
 frames. Times are milliseconds per frame.

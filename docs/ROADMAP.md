@@ -103,8 +103,8 @@ go into DESIGN.md.
   canvas (`crates/omavec/src/canvas.rs`): `OMAVEC_BLOBS=10000 omavec`
   shows the test scene to pan and zoom by hand, with the zoom and the
   last frame's time in the corner.
-  Later: delete `examples/canvas_bench.rs`, the `vello` dev-dependency and
-  `omavec_render::spike` once documents can be drawn.
+  `examples/canvas_bench.rs` and the `vello` dev-dependency went once
+  documents could be drawn; `omavec_render::spike` stays as the test scene.
 - ~~**Spike: blurs and shadows.** Prototype a drop shadow and a layer blur
   on an arbitrary path with the renderer picked above. VectorCraft draws
   both as `vello_cpu` filter layers (`crates/render/src/fx.rs`): start
@@ -252,11 +252,12 @@ reopen and export.
   the stroke's weight and side; a drag on any of them is one undo step.
   Left: blend modes, gradients, the eyedropper, caps, joins and dashes,
   and editing several nodes at once.
-  Later: a node's opacity as a layer, not multiplied into its children;
-  frames that clip what they draw (hit testing already respects it); a
-  stroke counted in hit testing and in a node's bounds; the hairline of
-  backdrop that shows between a fill and an outside stroke where their
-  antialiased edges meet.
+  A node's opacity fades the whole of it as one layer, and a frame that
+  clips hides what its children draw outside it, on the canvas and in
+  exported PNG and SVG alike.
+  Later: a stroke counted in hit testing and in a node's bounds; the
+  hairline of backdrop that shows between a fill and an outside stroke
+  where their antialiased edges meet.
 - Panels: layers (tree, rename, reorder by drag, hide, lock, multi-select),
   properties (Figma's right panel layout). Built so far: the layers panel
   (select, Shift-select, rename by double-click, hide and lock per row and
@@ -280,8 +281,7 @@ reopen and export.
   file.omavec --frame Logo --format svg,png@2x --out dist/` writes
   top-level frames with no window: every frame if none is named, PNG at 1×
   if no format is. Left: exporting from the app, export settings kept on
-  nodes, anything that isn't a top-level frame, clipping, and layer names
-  as ids.
+  nodes, anything that isn't a top-level frame, and layer names as ids.
 - `OMAVEC_SCRIPT` replay and the egui `Harness` for UI tests.
 - Command palette (Ctrl+K, Ctrl+/) listing every `Command`, and `:` to
   open it as a command line.

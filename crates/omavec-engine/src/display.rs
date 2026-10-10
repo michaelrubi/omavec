@@ -24,19 +24,34 @@ pub(crate) fn shape(node: &Node) -> Option<BezPath> {
 }
 
 /// One filled path, in document units.
-pub struct Item {
+pub struct Fill {
     pub path: BezPath,
     pub color: peniko::Color,
     bounds: Rect,
 }
 
-impl Item {
-    pub fn new(path: BezPath, color: peniko::Color) -> Self {
-        Self { bounds: path.bounding_box(), path, color }
-    }
-
+impl Fill {
     pub fn bounds(&self) -> Rect {
         self.bounds
+    }
+}
+
+/// One step of drawing a page.
+pub enum Item {
+    Fill(Fill),
+    /// Until the `Unclip` that matches it, only what is inside the path shows.
+    Clip(BezPath),
+    Unclip,
+    /// Until the `Unfade` that matches it, what is drawn is drawn together
+    /// and then let through at this opacity, so where two things in it
+    /// overlap neither shows through the other.
+    Fade(f32),
+    Unfade,
+}
+
+impl Item {
+    pub fn new(path: BezPath, color: peniko::Color) -> Self {
+        Item::Fill(Fill { bounds: path.bounding_box(), path, color })
     }
 }
 
@@ -50,19 +65,26 @@ impl DisplayList {
     /// Everything visible on `page`.
     pub fn of(page: &Node) -> Self {
         let mut list = Self::default();
-        list.add(page, Affine::IDENTITY, 1.0);
+        list.add(page, Affine::IDENTITY);
         list
     }
 
-    fn add(&mut self, node: &Node, parent: Affine, opacity: f64) {
+    fn add(&mut self, node: &Node, parent: Affine) {
         if !node.visible {
             return;
         }
         let transform = parent * node.transform;
-        // Later: a node's opacity belongs to the node as a whole, so where
-        // its children overlap this shows through and a layer wouldn't.
-        let opacity = opacity * node.opacity;
         let path = shape(node);
+        let stroked = node.stroke.weight > 0.0 && node.stroke.paints.iter().any(|paint| paint.visible);
+        // A node's opacity is the node's as a whole. One paint and nothing
+        // else can simply be that much fainter; anything more is drawn
+        // together first.
+        let paints = node.fills.iter().filter(|paint| paint.visible).count() + if stroked { node.stroke.paints.iter().filter(|paint| paint.visible).count() } else { 0 };
+        let together = node.opacity < 1.0 && (paints > 1 || !node.children.is_empty());
+        let opacity = if together { 1.0 } else { node.opacity };
+        if together {
+            self.items.push(Item::Fade(node.opacity.clamp(0.0, 1.0) as f32));
+        }
         let paint = |list: &mut Self, path: &BezPath, paints: &[crate::paint::Paint]| {
             let path = transform * path.clone();
             // A stroke with no weight has no area to paint.
@@ -75,15 +97,23 @@ impl DisplayList {
         if let Some(path) = &path {
             paint(self, path, &node.fills);
         }
-        // Later: a frame with `clip` on hides what its children draw outside it.
+        // A frame that clips shows nothing of its children outside itself.
+        let clip = path.as_ref().filter(|_| matches!(node.kind, NodeKind::Frame { clip: true }) && !node.children.is_empty());
+        if let Some(path) = clip {
+            self.items.push(Item::Clip(transform * path.clone()));
+        }
         for child in &node.children {
-            self.add(child, transform, opacity);
+            self.add(child, transform);
+        }
+        if clip.is_some() {
+            self.items.push(Item::Unclip);
         }
         // The stroke goes over the fill, and a frame's over what is in it.
-        if let Some(path) = &path
-            && node.stroke.paints.iter().any(|paint| paint.visible)
-        {
+        if let Some(path) = path.as_ref().filter(|_| stroked) {
             paint(self, &outline(path, node.stroke.weight, node.stroke.align), &node.stroke.paints);
+        }
+        if together {
+            self.items.push(Item::Unfade);
         }
     }
 }

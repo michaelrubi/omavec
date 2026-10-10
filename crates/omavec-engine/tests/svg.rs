@@ -188,3 +188,38 @@ fn a_centred_stroke_is_a_stroke_and_the_others_are_the_area_they_cover() {
     assert_eq!(lines[5], r##"  <rect width="100" height="60" fill="none" stroke="#000000" stroke-width="1" stroke-opacity="0.5"/>"##);
     assert_eq!(lines[6], "</svg>");
 }
+
+#[test]
+fn a_frame_that_clips_is_a_clip_path_round_its_children() {
+    let mut document = Document::default();
+    let page = document.pages[0].id;
+    let mut add = |parent: NodeId, kind: NodeKind, at: (f64, f64), size: (f64, f64)| {
+        let mut node = document.create(kind, Size::new(size.0, size.1));
+        node.transform = Affine::translate(at);
+        let id = node.id;
+        document.insert(parent, usize::MAX, node).unwrap();
+        id
+    };
+    let outer = add(page, NodeKind::Frame { clip: true }, (500.0, 500.0), (200.0, 100.0));
+    let inner = add(outer, NodeKind::Frame { clip: true }, (20.0, 10.0), (60.0, 40.0));
+    add(inner, NodeKind::Ellipse, (40.0, 20.0), (40.0, 40.0));
+    add(outer, NodeKind::Frame { clip: true }, (120.0, 10.0), (60.0, 40.0));
+    // The picture's own edge clips the frame that is exported; the frame
+    // in it gets a clip path, named after its id; one with nothing in it
+    // has nothing to clip.
+    let expected = r##"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 200 100">
+  <rect width="200" height="100" fill="#ffffff"/>
+  <g transform="translate(20 10)">
+    <rect width="60" height="40" fill="#ffffff"/>
+    <clipPath id="clip3"><rect width="60" height="40"/></clipPath>
+    <g clip-path="url(#clip3)">
+      <ellipse cx="60" cy="40" rx="20" ry="20" fill="#d9d9d9"/>
+    </g>
+  </g>
+  <g transform="translate(120 10)">
+    <rect width="60" height="40" fill="#ffffff"/>
+  </g>
+</svg>
+"##;
+    assert_eq!(svg::write(&document, outer).unwrap(), expected);
+}

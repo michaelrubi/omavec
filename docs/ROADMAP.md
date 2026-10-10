@@ -5,12 +5,13 @@ the architecture; [DECISIONS.md](DECISIONS.md) records why. As in Omapix,
 finished items are ~~struck through~~ with "(done)", and anything deferred
 goes on a "Later:" line under the item.
 
-Status: Phase 0 is done bar Michael trying the shell by hand. Phase 1 is
-well under way: you can draw frames, rectangles and ellipses; select,
-move, resize, rotate and delete them; give them fills and strokes; rename,
-hide and lock layers; undo and redo; save to a `.omavec` folder or a
-`.omavecz` file; and export frames as SVG and PNG from a terminal. None of
-it has been tried by hand yet.
+Status: Phase 0 is done. Phase 1 is built as far as its exit test: you
+can draw frames and every shape, select, move, resize, turn, group and
+restack them, give them fills, gradients, strokes and blend modes, undo
+and redo, save and reopen, and export from the app and from a terminal.
+What each bullet still lacks is listed under it as "Left" or "Later". None
+of it has been tried by hand yet: it is tested headless, and the
+installed binary has been driven by `omavec run`.
 
 ## Borrowing from VectorCraft
 
@@ -345,8 +346,12 @@ reopen and export.
   frame (`app.rs`, `canvas.rs`, `layers_panel.rs`).
   Later: steps for what the Design panel sets (fill, stroke, radius), so
   a script can style what it draws.
-- Command palette (Ctrl+K, Ctrl+/) listing every `Command`, and `:` to
-  open it as a command line.
+- ~~Command palette (Ctrl+K, Ctrl+/) listing every `Command`, and `:` to
+  open it as a command line.~~ (done) It filters as you type (the start of
+  the name first, then the start of a word, then anywhere, then the
+  letters in order), with arrows, Enter and Esc. What is typed that is no
+  command's name is taken as a line of script, so `:Rectangle 0 0 100
+  100` draws one. Written by Antigravity to a brief.
 
 Exit: draw a few shapes in two frames, style them, save, reopen, undo
 through the session, and export the frames as SVG and PNG from the app and

@@ -413,6 +413,11 @@ keeps proportions, Alt about the middle) and turns from just outside a
 corner (Shift by 15°). Dragging the selection moves it; Shift keeps the
 move on one axis and Alt moves a copy.
 
+The command palette (Ctrl+K, Ctrl+/ or a colon) lists every command and
+filters as you type; what is typed that is no command's name is taken as a
+line of script (`crates/omavec/src/script.rs`), which is the `:` command
+line.
+
 Copy puts the nodes on Omavec's own clipboard and offers them to other
 apps as `image/svg+xml` through `wl-copy`. Paste takes only Omavec's own:
 into the selected frame or group, or beside the selection, or onto the

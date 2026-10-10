@@ -1,6 +1,6 @@
 //! The command palette: lists and filters the app's commands, and picks one.
-
-#![allow(dead_code)]
+//! What is typed that is no command is handed back, to be taken as a line
+//! of script.
 
 use egui::{Key, Modifiers};
 use crate::commands::Command;
@@ -38,6 +38,8 @@ pub struct Palette {
     open: bool,
     query: String,
     selected: usize,
+    /// What Enter was pressed on that matched no command.
+    pub typed: Option<String>,
 }
 
 impl Palette {
@@ -101,14 +103,19 @@ impl Palette {
                     if let Some(shortcut) = command.shortcut() {
                         button = button.shortcut_text(ctx.format_shortcut(&shortcut));
                     }
-                    if ui.add_sized([ui.available_width(), 0.0], button).clicked() {
+                    let row = ui.add_sized([ui.available_width(), 0.0], button);
+                    // The keys can take the highlight out of sight.
+                    if i == self.selected && (down || up) {
+                        row.scroll_to_me(None);
+                    }
+                    if row.clicked() {
                         clicked = Some(command);
                     }
                 }
             });
         });
 
-        if modal.should_close() {
+        let picked = if modal.should_close() {
             self.open = false;
             None
         } else if let Some(command) = clicked {
@@ -116,10 +123,24 @@ impl Palette {
             Some(command)
         } else if enter {
             self.open = false;
-            matching.get(self.selected).copied()
+            let picked = matching.get(self.selected).copied();
+            if picked.is_none() {
+                self.typed = Some(self.query.trim().to_owned()).filter(|typed| !typed.is_empty());
+            }
+            picked
         } else {
             None
+        };
+        // The field goes with the palette, and must not keep the keyboard:
+        // the next key is a shortcut again.
+        if !self.open {
+            ctx.memory_mut(|memory| {
+                if let Some(focused) = memory.focused() {
+                    memory.surrender_focus(focused);
+                }
+            });
         }
+        picked
     }
 }
 

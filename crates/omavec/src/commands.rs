@@ -53,12 +53,13 @@ pub enum Command {
     TogglePixelGrid,
     ToggleSnap,
     ToggleUi,
+    Palette,
     ToggleVisible,
     ToggleLocked,
 }
 
 impl Command {
-    pub const ALL: [Command; 50] = [
+    pub const ALL: [Command; 51] = [
         Command::New,
         Command::Open,
         Command::OpenRecent,
@@ -107,6 +108,7 @@ impl Command {
         Command::TogglePixelGrid,
         Command::ToggleSnap,
         Command::ToggleUi,
+        Command::Palette,
         Command::ToggleVisible,
         Command::ToggleLocked,
     ];
@@ -161,6 +163,7 @@ impl Command {
             Command::TogglePixelGrid => "Pixel Grid",
             Command::ToggleSnap => "Snapping",
             Command::ToggleUi => "Show/Hide UI",
+            Command::Palette => "Command Palette…",
             Command::ToggleVisible => "Show/Hide Selection",
             Command::ToggleLocked => "Lock/Unlock Selection",
         }
@@ -218,6 +221,7 @@ impl Command {
             Command::TogglePixelGrid => (Modifiers::SHIFT, Key::Quote),
             Command::ToggleSnap => (both, Key::Quote),
             Command::ToggleUi => (Modifiers::COMMAND, Key::Backslash),
+            Command::Palette => (Modifiers::COMMAND, Key::K),
             Command::ToggleVisible => (both, Key::H),
             Command::ToggleLocked => (both, Key::L),
         };
@@ -259,6 +263,11 @@ impl Command {
             if i.consume_key(Modifiers::NONE, Key::Backspace) {
                 pressed.push(Command::Delete);
             }
+            // The palette is Ctrl+/ as well, as in Figma, and a colon, as
+            // a command line is in Vim.
+            if i.consume_key(Modifiers::COMMAND, Key::Slash) || i.consume_key(Modifiers::NONE, Key::Colon) {
+                pressed.push(Command::Palette);
+            }
             i.events.retain(|event| !matches!(event, egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_)));
             pressed
         })
@@ -294,6 +303,9 @@ mod tests {
         assert_eq!(pressed(Key::CloseBracket, Modifiers::COMMAND), [Command::BringForward]);
         assert_eq!(pressed(Key::CloseBracket, Modifiers::NONE), [Command::BringToFront]);
         assert_eq!(pressed(Key::Enter, Modifiers::SHIFT), [Command::SelectParent]);
+        assert_eq!(pressed(Key::K, Modifiers::COMMAND), [Command::Palette]);
+        assert_eq!(pressed(Key::Slash, Modifiers::COMMAND), [Command::Palette]);
+        assert_eq!(pressed(Key::Colon, Modifiers::SHIFT), [Command::Palette]);
         // Ctrl+R is nobody's.
         assert_eq!(pressed(Key::R, Modifiers::COMMAND), []);
     }

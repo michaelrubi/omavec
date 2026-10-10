@@ -10,6 +10,7 @@ use crate::canvas::{Canvas, Overlay, Pointer};
 use crate::clipboard::Clipboard;
 use crate::commands::Command;
 use crate::layers_panel::{self, LayersPanel};
+use crate::palette::Palette;
 use crate::properties::Properties;
 use crate::recent::{self, Recent};
 use crate::recovery::{self, Left, Recovery};
@@ -67,6 +68,7 @@ pub struct App {
     /// The document Open Recent is to open, picked from its menu.
     reopen: Option<PathBuf>,
     recovery: Recovery,
+    palette: Palette,
     /// There is no window, so nothing can be asked: `omavec run`.
     windowless: bool,
     /// What is left of `OMAVEC_SCRIPT`, taken a step a frame.
@@ -134,7 +136,7 @@ impl App {
         canvas.readout = blobs.is_some();
         let document = Document::default();
         let page = document.pages[0].id;
-        Self { theme, theme_rx: None, show_ui: true, canvas, history: History::new(document), tools: Tools::default(), layers: LayersPanel::default(), properties: Properties::default(), page, drawn: None, spike: blobs.is_some(), path: None, dialog: None, status: None, title: String::new(), confirm: None, after_save: None, closing: false, clipboard: Clipboard::default(), v_down: false, recent: Recent::default(), reopen: None, recovery: Recovery::new(None, std::process::id()), left: None, windowless: false, script: Default::default() }
+        Self { theme, theme_rx: None, show_ui: true, canvas, history: History::new(document), tools: Tools::default(), layers: LayersPanel::default(), properties: Properties::default(), page, drawn: None, spike: blobs.is_some(), path: None, dialog: None, status: None, title: String::new(), confirm: None, after_save: None, closing: false, clipboard: Clipboard::default(), v_down: false, recent: Recent::default(), reopen: None, recovery: Recovery::new(None, std::process::id()), left: None, palette: Palette::default(), windowless: false, script: Default::default() }
     }
 
     fn say(&mut self, message: impl Into<String>, wrong: bool) {
@@ -449,6 +451,7 @@ impl App {
                 self.say(if self.tools.snap { "Snapping on" } else { "Snapping off" }, false);
             }
             Command::ToggleUi => self.show_ui = !self.show_ui,
+            Command::Palette => self.palette.open(),
         }
     }
 
@@ -484,7 +487,7 @@ impl App {
             ("File", &[Command::New, Command::Open, Command::OpenRecent, Command::Save, Command::SaveAs, Command::Export, Command::Quit]),
             ("Edit", &[Command::Undo, Command::Redo, Command::Cut, Command::Copy, Command::Paste, Command::Duplicate, Command::Delete, Command::SelectAll, Command::SelectChildren, Command::SelectParent]),
             ("Object", &[Command::Group, Command::Ungroup, Command::FrameSelection, Command::BringToFront, Command::BringForward, Command::SendBackward, Command::SendToBack, Command::ToggleVisible, Command::ToggleLocked]),
-            ("View", &[Command::ZoomIn, Command::ZoomOut, Command::ZoomTo100, Command::ZoomToFit, Command::ZoomToSelection, Command::ToggleRulers, Command::TogglePixelGrid, Command::ToggleSnap, Command::ToggleUi]),
+            ("View", &[Command::ZoomIn, Command::ZoomOut, Command::ZoomTo100, Command::ZoomToFit, Command::ZoomToSelection, Command::ToggleRulers, Command::TogglePixelGrid, Command::ToggleSnap, Command::ToggleUi, Command::Palette]),
         ];
         egui::MenuBar::new().ui(ui, |ui| {
             for (menu, commands) in MENUS {
@@ -592,6 +595,22 @@ impl App {
         went_wrong(&app).map_or(Ok(()), Err)
     }
 
+    /// The command palette, and what was picked from it or typed into it.
+    fn pick(&mut self, ctx: &egui::Context) {
+        // Everything but itself, and Esc, which closes it.
+        let listed: Vec<Command> = Command::ALL.into_iter().filter(|command| !matches!(command, Command::Palette | Command::Cancel)).collect();
+        if let Some(command) = self.palette.show(ctx, &listed) {
+            self.run(command, ctx);
+        }
+        // What is no command's name may be a line of script.
+        if let Some(typed) = self.palette.typed.take() {
+            match script::parse(&typed) {
+                Ok(steps) => steps.into_iter().for_each(|step| self.step(step, ctx)),
+                Err(error) => self.say(error, true),
+            }
+        }
+    }
+
     /// What to do with the unsaved changes a session before this one left.
     fn recover(&mut self, bring_back: bool) {
         let Some(left) = self.left.take() else { return };
@@ -637,7 +656,7 @@ impl App {
     fn keys(&mut self, ctx: &egui::Context) {
         // While a text field has focus, keys edit the text; while a question
         // is up, it is answered first.
-        if !ctx.egui_wants_keyboard_input() && self.confirm.is_none() && self.left.is_none() {
+        if !ctx.egui_wants_keyboard_input() && self.confirm.is_none() && self.left.is_none() && !self.palette.is_open() {
             for command in Command::pressed(ctx, &mut self.v_down) {
                 self.run(command, ctx);
             }
@@ -844,6 +863,7 @@ impl eframe::App for App {
         self.show(ui);
         self.confirm(ui.ctx());
         self.offer(ui.ctx());
+        self.pick(ui.ctx());
     }
 }
 
@@ -1314,6 +1334,43 @@ mod tests {
         assert_eq!(document.node(first).unwrap().fills, [Paint::solid(red)]);
         // The click selected and moved nothing, and the tool is Move again.
         assert_eq!((app.tools.selection.clone(), app.tools.tool, app.history.undo_name()), (vec![first], Tool::Move, Some("Fill")));
+    }
+
+    #[test]
+    fn the_palette_runs_a_command_by_name_or_a_line_of_script() {
+        let (ctx, mut app, _) = app();
+        // One frame of the window and the palette over it.
+        let turn = |ctx: &egui::Context, app: &mut App, events: Vec<Event>| {
+            let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 600.0))), events, ..Default::default() };
+            let mut output = ctx.run_ui(input, |ui| {
+                app.keys(ui.ctx());
+                app.show(ui);
+                app.pick(ui.ctx());
+            });
+            output.textures_delta.clear();
+        };
+        let enter = || key(Key::Enter, Modifiers::NONE);
+        turn(&ctx, &mut app, key(Key::K, Modifiers::COMMAND));
+        assert!(app.palette.is_open());
+        turn(&ctx, &mut app, vec![Event::ModifiersChanged(Modifiers::NONE)]);
+        // Letters go to the palette, not to the tools they would pick.
+        turn(&ctx, &mut app, vec![Event::Text("rul".into())]);
+        assert_eq!(app.tools.tool, Tool::Move);
+        turn(&ctx, &mut app, enter());
+        assert!(app.canvas.rulers && !app.palette.is_open());
+
+        // A colon opens it too; what is no command is a line of script.
+        turn(&ctx, &mut app, key(Key::Colon, Modifiers::SHIFT));
+        turn(&ctx, &mut app, vec![Event::ModifiersChanged(Modifiers::NONE)]);
+        turn(&ctx, &mut app, vec![Event::Text("Rectangle 10 20 100 50".into())]);
+        turn(&ctx, &mut app, enter());
+        assert_eq!(boxes(&app), [(NodeKind::Rectangle, Rect::new(10.0, 20.0, 110.0, 70.0))]);
+        // And what is neither says so.
+        turn(&ctx, &mut app, key(Key::Slash, Modifiers::COMMAND));
+        turn(&ctx, &mut app, vec![Event::ModifiersChanged(Modifiers::NONE)]);
+        turn(&ctx, &mut app, vec![Event::Text("42".into())]);
+        turn(&ctx, &mut app, enter());
+        assert_eq!(app.status, Some(("\"42\" is not a step".into(), true)));
     }
 
     #[test]

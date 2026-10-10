@@ -149,7 +149,7 @@ fn a_centred_stroke_is_a_stroke_and_the_others_are_the_area_they_cover() {
     use omavec_engine::{Align, Stroke};
     let mut document = Document::default();
     let page = document.pages[0].id;
-    let black = |weight: f64, align: Align| Stroke { paints: vec![Paint::solid(Color::rgb(0, 0, 0))], weight, align };
+    let black = |weight: f64, align: Align| Stroke { paints: vec![Paint::solid(Color::rgb(0, 0, 0))], weight, align, ..Default::default() };
 
     let mut frame = document.create(NodeKind::Frame { clip: false }, Size::new(100.0, 60.0));
     frame.stroke = black(1.0, Align::Center);
@@ -222,4 +222,45 @@ fn a_frame_that_clips_is_a_clip_path_round_its_children() {
 </svg>
 "##;
     assert_eq!(svg::write(&document, outer).unwrap(), expected);
+}
+
+#[test]
+fn shapes_are_the_plainest_element_that_says_them() {
+    use omavec_engine::Cap;
+    let mut document = Document::default();
+    let page = document.pages[0].id;
+    let frame = document.create(NodeKind::Frame { clip: false }, Size::new(300.0, 200.0));
+    let frame_id = frame.id;
+    document.insert(page, 0, frame).unwrap();
+    let mut add = |kind: NodeKind, at: (f64, f64), size: (f64, f64)| {
+        let mut node = document.create(kind, Size::new(size.0, size.1));
+        node.transform = Affine::translate(at);
+        let id = node.id;
+        document.insert(frame_id, usize::MAX, node).unwrap();
+        id
+    };
+    let rounded = add(NodeKind::Rectangle, (10.0, 10.0), (80.0, 40.0));
+    let lopsided = add(NodeKind::Rectangle, (100.0, 10.0), (80.0, 40.0));
+    add(NodeKind::Polygon { sides: 4 }, (10.0, 60.0), (40.0, 40.0));
+    let line = add(NodeKind::Line, (100.0, 80.0), (60.0, 0.0));
+    let arrow = add(NodeKind::Line, (100.0, 120.0), (60.0, 0.0));
+    document.node_mut(rounded).unwrap().radii = [8.0; 4];
+    // More than fits: half the shorter side is as round as it gets.
+    document.node_mut(frame_id).unwrap().radii = [500.0; 4];
+    document.node_mut(lopsided).unwrap().radii = [20.0, 0.0, 0.0, 0.0];
+    let stroke = &mut document.node_mut(line).unwrap().stroke;
+    (stroke.weight, stroke.start_cap, stroke.end_cap) = (4.0, Cap::Round, Cap::Round);
+    document.node_mut(arrow).unwrap().stroke.end_cap = Cap::Triangle;
+
+    let svg = svg::write(&document, frame_id).unwrap();
+    let lines: Vec<&str> = svg.lines().map(str::trim).collect();
+    assert_eq!(lines[1], r##"<rect width="300" height="200" rx="100" fill="#ffffff"/>"##);
+    assert_eq!(lines[2], r##"<rect x="10" y="10" width="80" height="40" rx="8" fill="#d9d9d9"/>"##);
+    // One round corner: a path, starting where that corner's arc does.
+    assert!(lines[3].starts_with(r#"<path d="M0 20C"#) && lines[3].ends_with(r##"L0 40Z" transform="translate(100 10)" fill="#d9d9d9"/>"##), "{}", lines[3]);
+    assert_eq!(lines[4], r##"<path d="M20 0L40 20L20 40L0 20Z" transform="translate(10 60)" fill="#d9d9d9"/>"##);
+    // A line is a stroke; one with an arrowhead is the area it covers.
+    assert_eq!(lines[5], r##"<path d="M0 0L60 0" transform="translate(100 80)" fill="none" stroke="#000000" stroke-width="4" stroke-linecap="round"/>"##);
+    assert!(lines[6].starts_with(r#"<path d="M"#) && lines[6].ends_with(r##"Z" transform="translate(100 120)" fill="#000000"/>"##), "{}", lines[6]);
+    assert_eq!(lines.len(), 8);
 }

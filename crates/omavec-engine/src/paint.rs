@@ -1,6 +1,6 @@
 //! What a node is filled with.
 
-use omavec_geom::stroke::Align;
+use omavec_geom::stroke::{Align, Cap, Join, Style};
 use serde::{Deserialize, Serialize};
 
 /// An sRGB colour. In a file it is `"#rrggbb"`.
@@ -67,18 +67,34 @@ pub struct Stroke {
     pub paints: Vec<Paint>,
     pub weight: f64,
     pub align: Align,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub join: Join,
+    /// How each end of an open path is finished.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub start_cap: Cap,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub end_cap: Cap,
+}
+
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
 }
 
 impl Default for Stroke {
     /// What Figma starts a stroke with, less the paint.
     fn default() -> Self {
-        Self { paints: Vec::new(), weight: 1.0, align: Align::Inside }
+        Self { paints: Vec::new(), weight: 1.0, align: Align::Inside, join: Join::Miter, start_cap: Cap::None, end_cap: Cap::None }
     }
 }
 
 impl Stroke {
     pub(crate) fn is_none(&self) -> bool {
         self.paints.is_empty()
+    }
+
+    /// The stroke's shape, without its paints.
+    pub fn style(&self) -> Style {
+        Style { weight: self.weight, align: self.align, join: self.join, start: self.start_cap, end: self.end_cap }
     }
 }
 

@@ -2,26 +2,11 @@
 //! back to front. It is what the renderer draws, on the canvas and for
 //! export alike.
 
-use omavec_geom::kurbo::{Affine, BezPath, Ellipse, Rect, Shape};
+use omavec_geom::kurbo::{Affine, BezPath, Rect, Shape};
 use omavec_geom::stroke::outline;
 
 use crate::document::{Node, NodeKind};
 use crate::paint::PaintKind;
-
-/// How far an ellipse's path may stray from the true curve, in document
-/// units: a quarter of a pixel at the deepest zoom.
-const TOLERANCE: f64 = 1e-3;
-
-/// A node's own shape as a path, in its own coordinates. Pages and groups
-/// have none.
-pub(crate) fn shape(node: &Node) -> Option<BezPath> {
-    let bounds = Rect::from_origin_size((0.0, 0.0), node.size);
-    match node.kind {
-        NodeKind::Page | NodeKind::Group => None,
-        NodeKind::Frame { .. } | NodeKind::Rectangle => Some(bounds.to_path(TOLERANCE)),
-        NodeKind::Ellipse => Some(Ellipse::from_rect(bounds).to_path(TOLERANCE)),
-    }
-}
 
 /// One filled path, in document units.
 pub struct Fill {
@@ -74,7 +59,7 @@ impl DisplayList {
             return;
         }
         let transform = parent * node.transform;
-        let path = shape(node);
+        let path = node.shape();
         let stroked = node.stroke.weight > 0.0 && node.stroke.paints.iter().any(|paint| paint.visible);
         // A node's opacity is the node's as a whole. One paint and nothing
         // else can simply be that much fainter; anything more is drawn
@@ -110,7 +95,7 @@ impl DisplayList {
         }
         // The stroke goes over the fill, and a frame's over what is in it.
         if let Some(path) = path.as_ref().filter(|_| stroked) {
-            paint(self, &outline(path, node.stroke.weight, node.stroke.align), &node.stroke.paints);
+            paint(self, &outline(path, &node.stroke.style()), &node.stroke.paints);
         }
         if together {
             self.items.push(Item::Unfade);

@@ -149,7 +149,7 @@ fn a_frame_that_clips_does_so_round_its_children_only() {
     // Nothing in it: nothing to clip.
     assert_eq!(steps(&document), "f");
     add(&mut document, frame, NodeKind::Rectangle, (90.0, 40.0), (30.0, 30.0), RED);
-    document.node_mut(frame).unwrap().stroke = omavec_engine::Stroke { paints: vec![Paint::solid(RED)], weight: 4.0, align: omavec_engine::Align::Outside };
+    document.node_mut(frame).unwrap().stroke = omavec_engine::Stroke { paints: vec![Paint::solid(RED)], weight: 4.0, align: omavec_engine::Align::Outside, ..Default::default() };
     // Its fill, its children inside the clip, then its stroke outside it.
     assert_eq!(steps(&document), "f[f]f");
     let list = DisplayList::of(&document.pages[0]);
@@ -180,8 +180,8 @@ fn a_stroke_is_drawn_over_the_fill_and_a_frames_over_its_children() {
     let page = document.pages[0].id;
     let frame = add(&mut document, page, NodeKind::Frame { clip: false }, (0.0, 0.0), (100.0, 100.0), BLUE);
     let rectangle = add(&mut document, frame, NodeKind::Rectangle, (10.0, 10.0), (50.0, 20.0), RED);
-    document.node_mut(frame).unwrap().stroke = Stroke { paints: vec![Paint::solid(black)], weight: 4.0, align: Align::Outside };
-    document.node_mut(rectangle).unwrap().stroke = Stroke { paints: vec![Paint::solid(black)], weight: 2.0, align: Align::Inside };
+    document.node_mut(frame).unwrap().stroke = Stroke { paints: vec![Paint::solid(black)], weight: 4.0, align: Align::Outside, ..Default::default() };
+    document.node_mut(rectangle).unwrap().stroke = Stroke { paints: vec![Paint::solid(black)], weight: 2.0, align: Align::Inside, ..Default::default() };
 
     let drawn = drawn(&document);
     let colours: Vec<[u8; 4]> = drawn.iter().map(|(colour, _)| *colour).collect();
@@ -203,8 +203,65 @@ fn a_stroke_is_saved_only_when_there_is_one() {
     let mut document = Document::default();
     let mut node = document.create(NodeKind::Rectangle, Size::new(10.0, 10.0));
     assert!(!serde_json::to_string(&node).unwrap().contains("stroke"));
-    node.stroke = Stroke { paints: vec![Paint::solid(RED)], weight: 2.5, align: Align::Center };
+    node.stroke = Stroke { paints: vec![Paint::solid(RED)], weight: 2.5, align: Align::Center, ..Default::default() };
     let text = serde_json::to_string(&node).unwrap();
     assert!(text.contains(r##""stroke":{"paints":[{"type":"solid","color":"#ff0000"}],"weight":2.5,"align":"center"}"##), "{text}");
     assert_eq!(serde_json::from_str::<omavec_engine::Node>(&text).unwrap(), node);
+}
+
+#[test]
+fn every_closed_shape_keeps_an_inside_stroke_inside_it() {
+    use omavec_engine::{Align, Stroke};
+    let kinds = [NodeKind::Frame { clip: true }, NodeKind::Rectangle, NodeKind::Ellipse, NodeKind::Arc { start: 0.3, sweep: 4.0, ratio: 0.4 }, NodeKind::Polygon { sides: 5 }, NodeKind::Star { points: 5, ratio: 0.4 }];
+    for kind in kinds {
+        let mut document = Document::default();
+        let page = document.pages[0].id;
+        let id = add(&mut document, page, kind.clone(), (10.0, 20.0), (200.0, 100.0), BLUE);
+        let stroke = |align| Stroke { paints: vec![Paint::solid(RED)], weight: 8.0, align, ..Default::default() };
+        let bounds = |document: &Document| drawn(document).into_iter().map(|(_, bounds)| bounds).collect::<Vec<_>>();
+        document.node_mut(id).unwrap().stroke = stroke(Align::Inside);
+        let [fill, inside] = bounds(&document)[..] else { panic!("{kind:?}") };
+        let grown = |by: f64| fill.inflate(by, by);
+        assert!(grown(1e-6).contains_rect(inside) && inside.contains_rect(grown(-1e-2)), "{kind:?}: {inside:?} in {fill:?}");
+        // And an outside one reaches beyond it: by its weight, or less
+        // past a point too sharp to mitre.
+        document.node_mut(id).unwrap().stroke = stroke(Align::Outside);
+        let outside = bounds(&document)[1];
+        assert!(outside.contains_rect(grown(2.0)) && grown(8.0 * 4.0).contains_rect(outside), "{kind:?}: {outside:?} round {fill:?}");
+    }
+}
+
+#[test]
+fn a_line_is_its_stroke_and_new_kinds_are_saved_by_name() {
+    let mut document = Document::default();
+    let page = document.pages[0].id;
+    let mut line = document.create(NodeKind::Line, Size::new(100.0, 0.0));
+    line.transform = Affine::translate((10.0, 50.0));
+    line.stroke.weight = 4.0;
+    document.insert(page, 0, line.clone()).unwrap();
+    // Black, down the middle of the line, and no fill.
+    assert_eq!(drawn(&document), [(rgba(Color::rgb(0, 0, 0), 255), Rect::new(10.0, 48.0, 110.0, 52.0))]);
+    // It is hit along its stroke, and a little beyond a thin one.
+    let hit = |document: &Document, x: f64, y: f64| !document.pages[0].hit((x, y).into()).is_empty();
+    assert!(hit(&document, 60.0, 51.5) && hit(&document, 9.0, 50.0) && !hit(&document, 60.0, 53.0) && !hit(&document, 113.0, 50.0));
+
+    let text = serde_json::to_string(&line).unwrap();
+    assert!(text.contains(r#""type":"line""#) && text.contains(r##""stroke":{"paints":[{"type":"solid","color":"#000000"}],"weight":4.0,"align":"center"}"##), "{text}");
+    assert_eq!(serde_json::from_str::<omavec_engine::Node>(&text).unwrap(), line);
+    line.stroke.end_cap = omavec_engine::Cap::Arrow;
+    assert!(serde_json::to_string(&line).unwrap().contains(r#""align":"center","end_cap":"arrow"}"#));
+
+    let mut star = document.create(NodeKind::Star { points: 5, ratio: 0.382 }, Size::new(10.0, 10.0));
+    let text = serde_json::to_string(&star).unwrap();
+    assert!(text.contains(r#""type":"star","points":5,"ratio":0.382"#) && !text.contains("radii"), "{text}");
+    assert_eq!(serde_json::from_str::<omavec_engine::Node>(&text).unwrap(), star);
+    star.kind = NodeKind::Rectangle;
+    star.radii = [4.0, 4.0, 0.0, 0.0];
+    assert!(serde_json::to_string(&star).unwrap().contains(r#""radii":[4.0,4.0,0.0,0.0]"#));
+    // Shapes are hit on their shape: the middle of a star, not between its points.
+    star.kind = NodeKind::Star { points: 5, ratio: 0.382 };
+    star.size = Size::new(100.0, 100.0);
+    star.transform = Affine::translate((200.0, 0.0));
+    document.insert(page, 1, star).unwrap();
+    assert!(hit(&document, 250.0, 50.0) && hit(&document, 250.0, 5.0) && !hit(&document, 215.0, 10.0));
 }

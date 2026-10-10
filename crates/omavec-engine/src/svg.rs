@@ -3,9 +3,8 @@
 use std::fmt::Write;
 
 use omavec_geom::kurbo::{Affine, BezPath, PathEl, Point};
-use omavec_geom::stroke::{Align, outline};
+use omavec_geom::stroke::{Align, Cap, Join, outline};
 
-use crate::display::shape;
 use crate::document::{Document, Error, Node, NodeId, NodeKind};
 use crate::paint::{Paint, PaintKind};
 
@@ -73,19 +72,45 @@ fn is_identity(t: &Affine) -> bool {
     is_translation(t) && num(e) == "0" && num(f) == "0"
 }
 
+/// The radius of all four corners of `node`, if they are the same, as SVG's
+/// `rx` has it: no more than half of either side.
+fn rounding(node: &Node) -> Option<f64> {
+    let [radius, rest @ ..] = node.radii;
+    rest.iter().all(|other| *other == radius).then(|| radius.clamp(0.0, node.size.width.min(node.size.height) / 2.0))
+}
+
+/// Whether `node` is written as a `<rect>` or an `<ellipse>`, not a path.
+fn is_plain(node: &Node) -> bool {
+    match node.kind {
+        NodeKind::Frame { .. } | NodeKind::Rectangle => rounding(node).is_some(),
+        NodeKind::Ellipse => true,
+        _ => false,
+    }
+}
+
+/// Whether `node`'s stroke is something SVG's own strokes can't say, and
+/// is written as the area it covers instead, which any viewer draws the
+/// same. SVG strokes are centred, with one kind of cap for both ends.
+fn is_outlined(node: &Node) -> bool {
+    let stroke = &node.stroke;
+    match node.kind {
+        NodeKind::Line => stroke.start_cap != stroke.end_cap || matches!(stroke.end_cap, Cap::Arrow | Cap::Triangle),
+        _ => stroke.align != Align::Center,
+    }
+}
+
 /// Writes one element for `piece` of `node`, with attributes in this order:
 /// geometry, transform, fill or stroke, their opacity, opacity.
 fn write_element(out: &mut String, indent: usize, node: &Node, transform: Option<&Affine>, piece: Piece<'_>, opacity: Option<f64>) {
     let translation = transform.filter(|t| is_translation(t)).map(|t| t.translation());
     let matrix = transform.filter(|t| !is_translation(t)).map(|t| t.as_coeffs());
-    // SVG strokes are centred. One on the inside or the outside is written
-    // as the area it covers, which any viewer draws the same.
     let (paint, outlined) = match piece {
-        Piece::Stroke(paint) if node.stroke.align != Align::Center => (paint, shape(node).map(|shape| outline(&shape, node.stroke.weight, node.stroke.align))),
+        Piece::Stroke(paint) if is_outlined(node) => (paint, node.shape().map(|shape| outline(&shape, &node.stroke.style()))),
         Piece::Fill(paint) | Piece::Stroke(paint) => (paint, None),
     };
-    if let Some(outline) = &outlined {
-        let _ = write!(out, "{:indent$}<path d=\"{}\"", "", path_data(outline));
+    let path = outlined.clone().or_else(|| node.shape().filter(|_| !is_plain(node)));
+    if let Some(path) = &path {
+        let _ = write!(out, "{:indent$}<path d=\"{}\"", "", path_data(path));
         if let Some(by) = translation.filter(|by| num(by.x) != "0" || num(by.y) != "0") {
             let _ = write!(out, " transform=\"translate({} {})\"", num(by.x), num(by.y));
         }
@@ -101,6 +126,9 @@ fn write_element(out: &mut String, indent: usize, node: &Node, transform: Option
             }
         }
         let _ = write!(out, " width=\"{}\" height=\"{}\"", num(node.size.width), num(node.size.height));
+        if let Some(radius) = rounding(node).map(num).filter(|radius| radius != "0") {
+            let _ = write!(out, " rx=\"{radius}\"");
+        }
     }
     if let Some([a, b, c, d, e, f]) = matrix {
         let _ = write!(out, " transform=\"matrix({} {} {} {} {} {})\"", num(a), num(b), num(c), num(d), num(e), num(f));
@@ -111,6 +139,22 @@ fn write_element(out: &mut String, indent: usize, node: &Node, transform: Option
     let painted = match piece {
         Piece::Stroke(_) if outlined.is_none() => {
             let _ = write!(out, " fill=\"none\" stroke=\"{color}\" stroke-width=\"{}\"", num(node.stroke.weight));
+            // Mitred corners and ends cut square are what SVG assumes.
+            let cap = match node.stroke.end_cap {
+                Cap::Round if node.kind == NodeKind::Line => Some("round"),
+                Cap::Square if node.kind == NodeKind::Line => Some("square"),
+                _ => None,
+            };
+            let join = match node.stroke.join {
+                Join::Miter => None,
+                Join::Bevel => Some("bevel"),
+                Join::Round => Some("round"),
+            };
+            for (name, value) in [("stroke-linecap", cap), ("stroke-linejoin", join)] {
+                if let Some(value) = value {
+                    let _ = write!(out, " {name}=\"{value}\"");
+                }
+            }
             "stroke-opacity"
         }
         _ => {
@@ -190,14 +234,20 @@ fn write_inside(node: &Node, indent: usize, clipped: bool, out: &mut String) {
     for piece in pieces(node, false) {
         write_element(out, indent, node, None, piece, None);
     }
-    let clip = !clipped && matches!(node.kind, NodeKind::Frame { clip: true });
+    // Rounded corners are not the picture's edge.
+    let clip = matches!(node.kind, NodeKind::Frame { clip: true }) && !(clipped && node.radii == [0.0; 4]);
     let mut children = String::new();
     for child in &node.children {
         write_node(child, if clip { indent + 2 } else { indent }, &mut children);
     }
     if clip && !children.is_empty() {
         let id = node.id.0;
-        let _ = writeln!(out, "{:indent$}<clipPath id=\"clip{id}\"><rect width=\"{}\" height=\"{}\"/></clipPath>", "", num(node.size.width), num(node.size.height));
+        let shape = match rounding(node).map(num) {
+            Some(radius) if radius == "0" => format!("<rect width=\"{}\" height=\"{}\"/>", num(node.size.width), num(node.size.height)),
+            Some(radius) => format!("<rect width=\"{}\" height=\"{}\" rx=\"{radius}\"/>", num(node.size.width), num(node.size.height)),
+            None => format!("<path d=\"{}\"/>", node.shape().map(|shape| path_data(&shape)).unwrap_or_default()),
+        };
+        let _ = writeln!(out, "{:indent$}<clipPath id=\"clip{id}\">{shape}</clipPath>", "");
         let _ = writeln!(out, "{:indent$}<g clip-path=\"url(#clip{id})\">", "");
         out.push_str(&children);
         let _ = writeln!(out, "{:indent$}</g>", "");

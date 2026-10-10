@@ -4,7 +4,8 @@
 
 use std::sync::Arc;
 
-use omavec_geom::kurbo::{Affine, Point, Rect, Size};
+use omavec_geom::kurbo::{Affine, BezPath, Point, Rect, Shape, Size};
+use omavec_geom::shapes;
 use serde::{Deserialize, Serialize};
 
 use crate::paint::{Color, Paint, Stroke, is_no, is_one, is_yes, one, yes};
@@ -40,6 +41,19 @@ pub enum NodeKind {
     Group,
     Rectangle,
     Ellipse,
+    /// Part of an ellipse: a pie slice, a ring, or a piece of a ring. It
+    /// starts at the angle `start` and goes on by `sweep`, in radians, 0 at
+    /// three o'clock and clockwise on screen; `ratio` is the hole's radius
+    /// as a fraction of the ellipse's.
+    Arc { start: f64, sweep: f64, ratio: f64 },
+    /// A regular polygon, its first corner at the top of the ellipse that
+    /// fits the node's box.
+    Polygon { sides: u32 },
+    /// A star, with a corner `ratio` of the way out between each two points.
+    Star { points: u32, ratio: f64 },
+    /// A straight line along the top of the node's box, which has no
+    /// height. It is drawn by its stroke.
+    Line,
 }
 
 impl NodeKind {
@@ -50,9 +64,17 @@ impl NodeKind {
     /// What Figma fills a new node of this kind with.
     fn fills(&self) -> Vec<Paint> {
         match self {
-            NodeKind::Page | NodeKind::Group => Vec::new(),
+            NodeKind::Page | NodeKind::Group | NodeKind::Line => Vec::new(),
             NodeKind::Frame { .. } => vec![Paint::solid(Color::rgb(0xff, 0xff, 0xff))],
-            NodeKind::Rectangle | NodeKind::Ellipse => vec![Paint::solid(Color::rgb(0xd9, 0xd9, 0xd9))],
+            _ => vec![Paint::solid(Color::rgb(0xd9, 0xd9, 0xd9))],
+        }
+    }
+
+    /// And what it strokes one with: only a line, which is nothing without.
+    fn stroke(&self) -> Stroke {
+        match self {
+            NodeKind::Line => Stroke { paints: vec![Paint::solid(Color::rgb(0, 0, 0))], align: crate::Align::Center, ..Stroke::default() },
+            _ => Stroke::default(),
         }
     }
 
@@ -63,7 +85,10 @@ impl NodeKind {
             NodeKind::Frame { .. } => "Frame",
             NodeKind::Group => "Group",
             NodeKind::Rectangle => "Rectangle",
-            NodeKind::Ellipse => "Ellipse",
+            NodeKind::Ellipse | NodeKind::Arc { .. } => "Ellipse",
+            NodeKind::Polygon { .. } => "Polygon",
+            NodeKind::Star { .. } => "Star",
+            NodeKind::Line => "Line",
         }
     }
 }
@@ -86,6 +111,10 @@ pub struct Node {
     #[serde(default, skip_serializing_if = "is_identity")]
     pub transform: Affine,
     pub size: Size,
+    /// The corners of a frame or a rectangle: top-left, top-right,
+    /// bottom-right, bottom-left.
+    #[serde(default, skip_serializing_if = "is_square")]
+    pub radii: [f64; 4],
     /// Bottom to top: the last fill is painted over the others.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fills: Vec<Paint>,
@@ -100,6 +129,10 @@ fn is_identity(transform: &Affine) -> bool {
     *transform == Affine::IDENTITY
 }
 
+fn is_square(radii: &[f64; 4]) -> bool {
+    *radii == [0.0; 4]
+}
+
 impl Node {
     /// Whether two trees are equal, without walking what they share: after
     /// an edit that is everything off the path to the change.
@@ -108,8 +141,8 @@ impl Node {
             return true;
         }
         // Spelled out so that a new field can't be forgotten here.
-        let Node { id, kind, name, visible, locked, opacity, transform, size, fills, stroke, children } = &**a;
-        (id, kind, name, visible, locked, opacity, transform, size, fills, stroke) == (&b.id, &b.kind, &b.name, &b.visible, &b.locked, &b.opacity, &b.transform, &b.size, &b.fills, &b.stroke)
+        let Node { id, kind, name, visible, locked, opacity, transform, size, radii, fills, stroke, children } = &**a;
+        (id, kind, name, visible, locked, opacity, transform, size, radii, fills, stroke) == (&b.id, &b.kind, &b.name, &b.visible, &b.locked, &b.opacity, &b.transform, &b.size, &b.radii, &b.fills, &b.stroke)
             && children.len() == b.children.len()
             && children.iter().zip(&b.children).all(|(a, b)| Node::same(a, b))
     }
@@ -123,17 +156,43 @@ impl Node {
         }
     }
 
+    /// The node's own shape as a path, in its own coordinates. Pages and
+    /// groups have none.
+    pub fn shape(&self) -> Option<BezPath> {
+        match self.kind {
+            NodeKind::Page | NodeKind::Group => None,
+            NodeKind::Frame { .. } | NodeKind::Rectangle => Some(shapes::rounded_rect(self.size, self.radii)),
+            // (kurbo's own ellipse comes as a path that isn't closed.)
+            NodeKind::Ellipse => Some(shapes::arc(self.size, 0.0, std::f64::consts::TAU, 0.0)),
+            NodeKind::Arc { start, sweep, ratio } => Some(shapes::arc(self.size, start, sweep, ratio)),
+            NodeKind::Polygon { sides } => Some(shapes::polygon(self.size, sides)),
+            NodeKind::Star { points, ratio } => Some(shapes::star(self.size, points, ratio)),
+            NodeKind::Line => {
+                let mut line = BezPath::new();
+                line.move_to((0.0, 0.0));
+                line.line_to((self.size.width, 0.0));
+                Some(line)
+            }
+        }
+    }
+
     /// Whether `point`, in this node's own coordinates, is on its shape.
     /// Pages and groups have no shape of their own.
     fn covers(&self, point: Point) -> bool {
         let inside = Rect::from_origin_size((0.0, 0.0), self.size).contains(point);
         match self.kind {
             NodeKind::Page | NodeKind::Group => false,
-            NodeKind::Frame { .. } | NodeKind::Rectangle => inside,
+            NodeKind::Frame { .. } | NodeKind::Rectangle if is_square(&self.radii) => inside,
             NodeKind::Ellipse => {
                 let (x, y) = (point.x / self.size.width * 2.0 - 1.0, point.y / self.size.height * 2.0 - 1.0);
                 inside && x * x + y * y <= 1.0
             }
+            // A line is as wide as its stroke, and never too thin to click.
+            NodeKind::Line => {
+                let reach = (self.stroke.weight / 2.0).max(2.0);
+                point.y.abs() <= reach && point.x >= -reach && point.x <= self.size.width + reach
+            }
+            _ => inside && self.shape().is_some_and(|shape| shape.winding(point) != 0),
         }
     }
 
@@ -193,7 +252,7 @@ impl Document {
     pub fn create(&mut self, kind: NodeKind, size: Size) -> Node {
         let id = NodeId(self.next_id);
         self.next_id += 1;
-        Node { id, name: kind.label().into(), visible: true, locked: false, opacity: 1.0, transform: Affine::IDENTITY, size, fills: kind.fills(), stroke: Stroke::default(), kind, children: Vec::new() }
+        Node { id, name: kind.label().into(), visible: true, locked: false, opacity: 1.0, transform: Affine::IDENTITY, size, radii: [0.0; 4], fills: kind.fills(), stroke: kind.stroke(), kind, children: Vec::new() }
     }
 
     /// A copy of `node` and everything in it, with ids of their own.

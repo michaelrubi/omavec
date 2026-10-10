@@ -15,5 +15,5 @@ pub mod svg;
 pub use arrange::Stack;
 pub use document::{Document, Error, Node, NodeId, NodeKind};
 pub use history::History;
-pub use omavec_geom::stroke::Align;
+pub use omavec_geom::stroke::{Align, Cap, Join};
 pub use paint::{Color, Paint, PaintKind, Stroke};

@@ -357,7 +357,7 @@ mod tests {
         panel.settle(&mut history, false);
         panel.change(&mut history, id, "Stroke", false, |node| node.stroke.align = Align::Outside).unwrap();
         let stroke = |history: &History| history.document().node(id).unwrap().stroke.clone();
-        assert_eq!(stroke(&history), omavec_engine::Stroke { paints: vec![Paint::solid(NEW_STROKE)], weight: 4.0, align: Align::Outside });
+        assert_eq!(stroke(&history), omavec_engine::Stroke { paints: vec![Paint::solid(NEW_STROKE)], weight: 4.0, align: Align::Outside, ..Default::default() });
         history.undo();
         assert_eq!(stroke(&history).align, Align::Inside);
         history.undo();

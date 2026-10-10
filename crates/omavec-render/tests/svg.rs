@@ -11,6 +11,7 @@ fn assert_svg_matches_render(label: &str, document: &Document, frame_id: NodeId)
     let height = frame_node.size.height.round() as u16;
 
     let svg_text = omavec_engine::svg::write(document, frame_id).unwrap();
+    if let Ok(dir) = std::env::var("DUMP_SVG") { std::fs::write(format!("{dir}/{label}.svg"), &svg_text).unwrap(); }
 
     let opt = resvg::usvg::Options::default();
     let tree = resvg::usvg::Tree::from_str(&svg_text, &opt).unwrap();
@@ -186,7 +187,7 @@ fn strokes_render_identically_on_every_side_of_the_edge() {
     use omavec_engine::{Align, Stroke};
     let mut document = Document::default();
     let page = document.pages[0].id;
-    let stroke = |color: Color, weight: f64, align: Align| Stroke { paints: vec![Paint::solid(color)], weight, align };
+    let stroke = |color: Color, weight: f64, align: Align| Stroke { paints: vec![Paint::solid(color)], weight, align, ..Default::default() };
 
     // A frame with a thick inside stroke of its own, drawn over what is in it.
     let mut frame = document.create(NodeKind::Frame { clip: false }, Size::new(360.0, 240.0));
@@ -241,7 +242,49 @@ fn a_clipping_frame_and_a_faded_group_render_identically() {
     add(group, NodeKind::Ellipse, Affine::translate((50.0, 20.0)), (120.0, 90.0), Some(Color::rgb(0xe9, 0xc4, 0x6a)));
     document.node_mut(group).unwrap().opacity = 0.6;
     // And the turned frame's stroke, outside it and so outside its clip.
-    document.node_mut(inner).unwrap().stroke = omavec_engine::Stroke { paints: vec![Paint::solid(Color::rgb(0, 0, 0))], weight: 4.0, align: omavec_engine::Align::Outside };
+    document.node_mut(inner).unwrap().stroke = omavec_engine::Stroke { paints: vec![Paint::solid(Color::rgb(0, 0, 0))], weight: 4.0, align: omavec_engine::Align::Outside, ..Default::default() };
 
     assert_svg_matches_render("a_clipping_frame_and_a_faded_group", &document, frame_id);
+}
+
+#[test]
+fn every_kind_of_shape_renders_identically() {
+    use omavec_engine::{Align, Cap, Join, Stroke};
+    let mut document = Document::default();
+    let page = document.pages[0].id;
+    let mut frame = document.create(NodeKind::Frame { clip: true }, Size::new(360.0, 240.0));
+    frame.radii = [30.0; 4];
+    let frame_id = frame.id;
+    document.insert(page, 0, frame).unwrap();
+    let mut add = |kind: NodeKind, transform: Affine, size: (f64, f64), color: Color| {
+        let mut node = document.create(kind, Size::new(size.0, size.1));
+        node.transform = transform;
+        if node.kind != NodeKind::Line {
+            node.fills = vec![Paint::solid(color)];
+        }
+        let id = node.id;
+        document.insert(frame_id, usize::MAX, node).unwrap();
+        id
+    };
+    let at = |x: f64, y: f64| Affine::translate((x, y));
+    // In the frame's rounded corner, to be cut off by it.
+    add(NodeKind::Rectangle, at(-10.0, -10.0), (60.0, 60.0), Color::rgb(0x1d, 0x35, 0x57));
+    let rounded = add(NodeKind::Rectangle, at(70.0, 20.0), (90.0, 60.0), Color::rgb(0xe6, 0x39, 0x46));
+    let lopsided = add(NodeKind::Rectangle, at(180.0, 20.0) * Affine::rotate(0.2), (90.0, 60.0), Color::rgb(0x2a, 0x9d, 0x8f));
+    add(NodeKind::Arc { start: 0.5, sweep: 4.0, ratio: 0.5 }, at(20.0, 100.0), (90.0, 70.0), Color::rgb(0xe9, 0xc4, 0x6a));
+    let polygon = add(NodeKind::Polygon { sides: 6 }, at(130.0, 100.0), (80.0, 80.0), Color::rgb(0x45, 0x7b, 0x9d));
+    add(NodeKind::Star { points: 5, ratio: 0.382 }, at(230.0, 100.0), (100.0, 90.0), Color::rgb(0xf4, 0xa2, 0x61));
+    let line = add(NodeKind::Line, at(30.0, 200.0), (120.0, 0.0), Color::rgb(0, 0, 0));
+    let arrow = add(NodeKind::Line, at(190.0, 215.0) * Affine::rotate(-0.3), (120.0, 0.0), Color::rgb(0, 0, 0));
+    document.node_mut(rounded).unwrap().radii = [12.0; 4];
+    document.node_mut(lopsided).unwrap().radii = [30.0, 0.0, 15.0, 5.0];
+    let black = |weight: f64, align: Align| Stroke { paints: vec![Paint::solid(Color::rgb(0, 0, 0))], weight, align, ..Default::default() };
+    document.node_mut(rounded).unwrap().stroke = black(4.0, Align::Inside);
+    document.node_mut(polygon).unwrap().stroke = Stroke { join: Join::Round, ..black(8.0, Align::Center) };
+    let stroke = &mut document.node_mut(line).unwrap().stroke;
+    (stroke.weight, stroke.start_cap, stroke.end_cap) = (10.0, Cap::Round, Cap::Round);
+    let stroke = &mut document.node_mut(arrow).unwrap().stroke;
+    (stroke.weight, stroke.start_cap, stroke.end_cap) = (3.0, Cap::Triangle, Cap::Arrow);
+
+    assert_svg_matches_render("every_kind_of_shape", &document, frame_id);
 }

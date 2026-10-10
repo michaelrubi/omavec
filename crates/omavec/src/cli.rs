@@ -5,62 +5,12 @@
 //! ```
 //!
 //! With no `--frame` every top-level frame is exported; with no `--format`,
-//! PNG at 1×; with no `--out`, into the current folder.
+//! each frame as its own export settings say, or as PNG at 1× if it has
+//! none; with no `--out`, into the current folder.
 
 use std::path::{Path, PathBuf};
 
-use omavec_engine::display::DisplayList;
-use omavec_engine::{Document, Node, NodeKind, file, svg};
-use omavec_geom::kurbo::Affine;
-use omavec_render::{Renderer, peniko};
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Format {
-    Svg,
-    /// PNG at this many pixels per document unit.
-    Png(f64),
-}
-
-impl Format {
-    /// `svg`, `png`, or `png@2x`.
-    fn parse(text: &str) -> Result<Self, String> {
-        let scale = |text: &str| text.strip_suffix('x').and_then(|scale| scale.parse::<f64>().ok()).filter(|scale| *scale > 0.0 && scale.is_finite());
-        match text.split_once('@') {
-            None if text == "svg" => Ok(Format::Svg),
-            None if text == "png" => Ok(Format::Png(1.0)),
-            Some(("png", size)) => scale(size).map(Format::Png).ok_or(format!("\"{text}\" is not a size like png@2x")),
-            _ => Err(format!("\"{text}\" is not a format: use svg, png or png@2x")),
-        }
-    }
-
-    /// The file a frame called `name` goes to, as Figma names its exports.
-    fn file_name(self, name: &str) -> String {
-        // A name is not a path.
-        let name = name.replace(['/', '\\'], "-");
-        match self {
-            Format::Svg => format!("{name}.svg"),
-            Format::Png(1.0) => format!("{name}.png"),
-            Format::Png(scale) => format!("{name}@{scale}x.png"),
-        }
-    }
-
-    fn write(self, document: &Document, frame: &Node) -> Result<Vec<u8>, String> {
-        match self {
-            Format::Svg => svg::write(document, frame.id).map(String::into_bytes).map_err(|error| error.to_string()),
-            Format::Png(scale) => {
-                let pixels = |length: f64| {
-                    let pixels = (length * scale).ceil();
-                    (1.0..=f64::from(u16::MAX)).contains(&pixels).then_some(pixels as u16).ok_or(format!("{} at {scale}x is {pixels} pixels: too big, or nothing", frame.name))
-                };
-                let (width, height) = (pixels(frame.size.width)?, pixels(frame.size.height)?);
-                // The frame alone, with its corner in the picture's.
-                let view = Affine::scale(scale) * frame.transform.inverse();
-                let drawn = Renderer::default().render(&DisplayList::of(frame), view, width, height, peniko::Color::TRANSPARENT);
-                drawn.into_png().map_err(|error| error.to_string())
-            }
-        }
-    }
-}
+use omavec_engine::{Export, Node, NodeKind, file};
 
 /// Runs `omavec export` with `arguments` (what follows the word `export`)
 /// and returns the files it wrote.
@@ -74,7 +24,7 @@ pub fn export(arguments: &[String]) -> Result<Vec<PathBuf>, String> {
             "--frame" => names.push(value()?.clone()),
             "--format" => {
                 for format in value()?.split(',') {
-                    formats.push(Format::parse(format)?);
+                    formats.push(Export::parse(format)?);
                 }
             }
             "--out" => out = PathBuf::from(value()?),
@@ -84,10 +34,6 @@ pub fn export(arguments: &[String]) -> Result<Vec<PathBuf>, String> {
         }
     }
     let folder = folder.ok_or("usage: omavec export file.omavec [--frame NAME]… [--format svg,png@2x] [--out DIR]")?;
-    if formats.is_empty() {
-        formats.push(Format::Png(1.0));
-    }
-
     let document = file::open(folder).map_err(|error| error.to_string())?;
     let all: Vec<&Node> = document.pages.iter().flat_map(|page| &page.children).map(|node| &**node).filter(|node| matches!(node.kind, NodeKind::Frame { .. })).collect();
     let frames = if names.is_empty() {
@@ -103,23 +49,15 @@ pub fn export(arguments: &[String]) -> Result<Vec<PathBuf>, String> {
         return Err("there are no frames to export".into());
     }
 
-    let io = |path: &Path, error: std::io::Error| format!("{}: {error}", path.display());
-    std::fs::create_dir_all(&out).map_err(|error| io(&out, error))?;
-    let mut written = Vec::new();
-    for frame in frames {
-        for format in &formats {
-            let path = out.join(format.file_name(&frame.name));
-            std::fs::write(&path, format.write(&document, frame)?).map_err(|error| io(&path, error))?;
-            written.push(path);
-        }
-    }
-    Ok(written)
+    let ids: Vec<_> = frames.iter().map(|frame| frame.id).collect();
+    crate::export::write(&document, &ids, &formats, &out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use omavec_geom::kurbo::Size;
+    use omavec_engine::Document;
+    use omavec_geom::kurbo::{Affine, Size};
 
     /// A folder for the test called `name`, holding `doc.omavec` with two
     /// frames, "Logo" (120 × 80, at (500, 300), holding an ellipse) and
@@ -179,6 +117,21 @@ mod tests {
         assert_eq!(run(&folder, &[]).unwrap(), ["Logo.png", "Icon - Small.png"]);
         assert_eq!(png_size(&folder.join("out/Logo.png")), (120, 80));
         assert_eq!(png_size(&folder.join("out/Icon - Small.png")), (16, 16));
+        let _ = std::fs::remove_dir_all(folder);
+    }
+
+    #[test]
+    fn a_frame_is_exported_as_its_own_settings_say_unless_told_otherwise() {
+        let folder = saved("own");
+        let path = folder.join("doc.omavec");
+        let mut document = file::open(&path).unwrap();
+        let logo = document.pages[0].children[0].id;
+        document.node_mut(logo).unwrap().exports = vec![Export::Svg, Export::Png { scale: 3.0 }];
+        file::save(&document, &path).unwrap();
+        // The settings survive the file, and say what comes out.
+        assert_eq!(file::open(&path).unwrap(), document);
+        assert_eq!(run(&folder, &[]).unwrap(), ["Logo.svg", "Logo@3x.png", "Icon - Small.png"]);
+        assert_eq!(run(&folder, &["--format", "png"]).unwrap(), ["Logo.png", "Icon - Small.png"]);
         let _ = std::fs::remove_dir_all(folder);
     }
 

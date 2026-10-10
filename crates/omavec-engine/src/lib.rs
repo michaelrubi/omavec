@@ -4,14 +4,18 @@
 // Shipped code returns errors; only tests may panic.
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+mod arrange;
 pub mod display;
 mod document;
+mod export;
 pub mod file;
 mod history;
 mod paint;
 pub mod svg;
 
+pub use arrange::Stack;
+pub use export::Export;
 pub use document::{Document, Error, Node, NodeId, NodeKind};
 pub use history::History;
-pub use omavec_geom::stroke::Align;
-pub use paint::{Color, Paint, PaintKind, Stroke};
+pub use omavec_geom::stroke::{Align, Cap, Join};
+pub use paint::{Blend, Color, Paint, PaintKind, Stop, Stroke};

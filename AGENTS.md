@@ -37,8 +37,10 @@ make install               # installs to ~/.local/bin (the copy Michael actually
 cargo run --release -- file.omavec        # a .omavec folder
 OMAVEC_BLOBS=10000 cargo run --release   # Phase 0's test scene, to try the canvas by hand
 omavec export file.omavec --frame Logo --format svg,png@2x --out dist/
-# Planned, not built yet:
-OMAVEC_SCRIPT="Rectangle 0 0 100 100,Ellipse 50 50 100 100,BooleanUnion" cargo run --release
+# A script (crates/omavec/src/script.rs): in the window, a step a frame…
+OMAVEC_SCRIPT="Rectangle 0 0 100 100,Ellipse 50 50 100 100,Group" cargo run --release
+# …or with no window at all, which is how to try the installed binary unattended
+omavec run "Frame 0 0 400 300,Rectangle 20 20 100 80,Export dist,Save made.omavec"
 ```
 
 ## Conventions

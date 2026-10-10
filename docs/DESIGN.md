@@ -95,19 +95,49 @@ Every visual node carries:
 
 - **Fills**: a stack of paints (solid, linear/radial/angular/diamond
   gradient, image), each with its own opacity and blend mode. Any colour
-  or number can be bound to a variable.
+  or number can be bound to a variable. A gradient's two points are places
+  in the node's box, a unit square, so it follows the node when it is
+  resized or turned, and a radial one is as wide and as high as the box
+  makes it; the display list carries the transform from that square to
+  the page with each fill.
 - **Strokes**: a stack of paints plus one stroke style: weight, align
   (inside/centre/outside), cap, join, miter limit, dashes, and an optional
   **width profile** (widths at positions along each segment). A stroke is
   drawn as the area it covers: a centred stroke's outline, and for inside
   or outside a stroke twice as wide cut to the half inside or outside the
   shape. SVG has only centred strokes, so those export as `stroke`
-  attributes and the other two as the area, a filled path.
+  attributes and the other two as the area, a filled path. A path that
+  isn't closed has no inside, so its stroke is centred, and each end has
+  a cap: none, round, square, or an arrowhead (open or filled) that is
+  joined to the stroke's area.
 - **Effects**: drop shadow, inner shadow, layer blur, background blur.
 - **Modifiers**: an ordered, live list of geometry operations: Offset Path,
   Outline Stroke, Warp/Envelope, Round Corners, Simplify. This is
   Illustrator's Appearance panel in Figma's node tree. Flatten bakes the
   whole stack into a plain `Vector`.
+
+What is built of that tree so far: `Page`, `Frame`, `Group`, and the
+shapes as kinds of their own: `Rectangle`, `Ellipse`, `Arc` (an ellipse
+with part of it gone or a hole in it; the panel turns one into the other),
+`Polygon`, `Star` and `Line`. A node has a radius for each corner, used by
+frames and rectangles. A line lies along the top of its box, which has no
+height; it is drawn by its stroke, and its two ends are its handles.
+`Node::shape` gives any of them as a path, from `omavec_geom::shapes`.
+kurbo's own ellipse is not a closed path, so ours is the arc function
+going all the way round: a stroke needs to know a shape is closed to have
+an inside.
+
+A group has no size of its own: its box is whatever holds its children
+(`Node::bounds`), so moving a child changes the group's box without a
+second edit to keep in step. Resizing a group, or several nodes at once,
+resizes each node in it (`Node::stretch`): a node keeps its angle, its
+middle moves, and its sides grow by as much as the stretch grows along
+each, so nothing is ever skewed and strokes keep their weight. What is in
+a frame stays put until Phase 5's constraints.
+
+Grouping, ungrouping, duplicating, restacking, copying and pasting
+(`omavec-engine/src/arrange.rs`) all leave every node where it was on the
+page; a property test does them in random order and checks.
 
 Coordinates are `f64` canvas units (kurbo's type), y down, as in Figma.
 Node ids stay stable across saves, which keeps git diffs small and lets
@@ -193,6 +223,16 @@ engine document ──► display list ──► omavec-render ──► frame (
 - `vello_cpu` keeps no scene between frames, so the renderer skips what is
   off screen before drawing; that is most of the cost of a zoomed-in view.
 - Nothing is drawn while nothing changes: an idle canvas uses no CPU.
+- The display list is fills between two kinds of bracket. `Clip` … `Unclip`
+  goes round the children of a frame that clips (not its own fill or
+  stroke, which may sit outside its edge) and becomes `vello_cpu`'s
+  `push_clip_path`. `Fade` … `Unfade` goes round a node whose opacity is
+  below 1 and which draws more than one thing (two paints, or children),
+  and becomes an opacity layer, so where its parts overlap neither shows
+  through the other. The same layer carries the node's blend mode, and a
+  node with one is always drawn as a layer. A node with one paint and nothing else is just that
+  much fainter, with no layer. SVG says the same things with `clip-path`
+  and group `opacity`, and a test holds the two renderings together.
 - Headless export (CLI, tests) uses the same renderer on the calling
   thread, so an export is what the canvas showed. Golden images need no
   GPU.
@@ -266,6 +306,12 @@ Variables, styles, assets and the thumbnail aren't written yet.
 - A `.omavecz` is the same folder zipped, for sending files to people and
   for opening from a file manager. Omavec opens and saves both; the folder
   is the one to keep in git.
+- Crash recovery never writes into the document: an unsaved one may have
+  no folder yet, and a folder in git shouldn't change behind its owner's
+  back. Each session keeps one `.omavecz` copy named after its process id
+  in `~/.local/state/omavec/recovery/`, with a note beside it of where the
+  document belongs. A copy whose process is gone is what a crash leaves;
+  the next session offers it back, as a document with unsaved changes.
 
 ### Import and export
 
@@ -275,7 +321,10 @@ Variables, styles, assets and the thumbnail aren't written yet.
   transforms, shortest path data, optional `currentColor`, per-frame or
   per-selection.
 - **PNG/JPEG/WebP export** at @1x/@2x/@3x presets, per node, like Figma's
-  export settings.
+  export settings. A node's settings are a list in the file (`exports`:
+  SVG, or PNG at a scale; JPEG and WebP to come), and the app's Export
+  command and `omavec export` are one function
+  (`crates/omavec/src/export.rs`), so they can't write different files.
 - **PDF export** through `svg2pdf`, mainly for logo handoff.
 - **Code export** from a selection: CSS, Tailwind classes, SVG, and
   SVG-in-JSX/TSX; variables as CSS custom properties, a Tailwind theme, or
@@ -292,7 +341,8 @@ Variables, styles, assets and the thumbnail aren't written yet.
 ```
 omavec file.omavec                                   open in the app
 omavec export file.omavec --frame Logo --format svg,png@2x --out dist/
-omavec export file.omavec --all-export-settings      every node's export presets
+omavec export file.omavec --out dist/                every frame, as its export settings say
+omavec run "Frame 0 0 400 300,Export dist" [file]    a script's steps, with no window
 omavec import design.fig --out design.omavec         .fig conversion + report
 omavec tokens file.omavec --format css|tailwind|omarchy
 ```
@@ -330,8 +380,11 @@ Figma's defaults, plus Illustrator's letters for the tools Figma lacks.
 | T | Text | H | Hand |
 | Shift+M | Shape Builder | C | Scissors |
 | Shift+C | Knife | Shift+W | Width tool |
-| I | Eyedropper | Enter | Edit vector / enter group |
-| Ctrl+G | Group | Ctrl+Alt+G | Frame selection |
+| I | Eyedropper | Enter / Shift+Enter | Select children (later: edit vector) / select parent |
+| Ctrl+G / Ctrl+Shift+G | Group / ungroup | Ctrl+Alt+G | Frame selection |
+| Ctrl+D | Duplicate | Ctrl+C / Ctrl+X / Ctrl+V | Copy / cut / paste |
+| ] / [ | Bring to front / send to back | Ctrl+] / Ctrl+[ | Bring forward / send backward |
+| Ctrl+A | Select all |  |  |
 | Shift+A | Add auto layout | Ctrl+Alt+K | Create component |
 | Ctrl+E | Flatten | Ctrl+Shift+O | Outline stroke |
 | Ctrl+Shift+H | Show/hide | Ctrl+Shift+L | Lock/unlock |
@@ -340,11 +393,35 @@ Figma's defaults, plus Illustrator's letters for the tools Figma lacks.
 | Ctrl+\ | Show/hide UI | Ctrl+Q | Quit |
 | Ctrl+Z / Ctrl+Shift+Z | Undo / redo | Delete, Backspace | Delete |
 | Ctrl+N / Ctrl+O | New / open | Ctrl+S / Ctrl+Shift+S | Save / save as |
-| Esc | Give up the drag, then the tool | Arrows / Shift+arrows | Nudge by 1 / 10 |
+| Ctrl+Shift+E | Export |  |  |
+| Esc | Give up the drag, then the tool, then the selection | Arrows / Shift+arrows | Nudge by 1 / 10 |
 | Shift+R | Rulers | Shift+' | Pixel grid |
+| Ctrl+Shift+' | Snapping |  |  |
 
 On the canvas: the wheel pans, Ctrl+wheel or a pinch zooms about the
 pointer, and middle drag or Space+drag pans.
+
+Selecting, with the Move tool: a click selects the deepest node under the
+pointer that is a child of the page, of a top-level frame, or of whatever
+holds something already selected; Ctrl+click selects the deepest there
+is, and a double click goes one deeper. Shift adds, or takes away on
+release. A drag from the bare page, or from the background of a top-level
+frame that has things in it, is a marquee: it selects what it touches of
+the page's children, and of a top-level frame's unless the frame is wholly
+inside it. The selection's box resizes from its corners and edges (Shift
+keeps proportions, Alt about the middle) and turns from just outside a
+corner (Shift by 15°). Dragging the selection moves it; Shift keeps the
+move on one axis and Alt moves a copy.
+
+The command palette (Ctrl+K, Ctrl+/ or a colon) lists every command and
+filters as you type; what is typed that is no command's name is taken as a
+line of script (`crates/omavec/src/script.rs`), which is the `:` command
+line.
+
+Copy puts the nodes on Omavec's own clipboard and offers them to other
+apps as `image/svg+xml` through `wl-copy`. Paste takes only Omavec's own:
+into the selected frame or group, or beside the selection, or onto the
+page, where the nodes were on the page when copied.
 
 ## Open-source references
 
@@ -374,7 +451,8 @@ each crate's `examples/`.
 
 ### Canvas renderer: `vello_cpu`
 
-`cargo run --release -p omavec-render --example canvas_bench` draws 10,000
+`examples/canvas_bench.rs` (deleted with its `vello` dependency once the
+canvas could draw documents; it is in the history at `ba407d5`) drew 10,000
 random cubic blobs (translucent, overlapping, scattered over 8,000 units)
 into a 2560 × 1440 frame with both renderers and takes the median of 30
 frames. Times are milliseconds per frame.

@@ -1,6 +1,6 @@
 //! A page flattened into what the renderer draws.
 
-use omavec_engine::display::DisplayList;
+use omavec_engine::display::{DisplayList, Item};
 use omavec_engine::{Color, Document, NodeId, NodeKind, Paint};
 use omavec_geom::kurbo::{Affine, Rect, Shape, Size};
 
@@ -21,13 +21,30 @@ fn rgba(color: Color, alpha: u8) -> [u8; 4] {
     [color.r, color.g, color.b, alpha]
 }
 
-/// Each item's colour and bounds, back to front.
+/// Each fill's colour and bounds, back to front.
 fn drawn(document: &Document) -> Vec<([u8; 4], Rect)> {
-    let colour = |item: &omavec_engine::display::Item| {
-        let c = item.color.to_rgba8();
-        [c.r, c.g, c.b, c.a]
+    let fill = |item: &Item| match item {
+        Item::Fill(fill) => {
+            let peniko::Brush::Solid(color) = &fill.brush else { panic!("not one colour") };
+            let c = color.to_rgba8();
+            Some(([c.r, c.g, c.b, c.a], fill.bounds()))
+        }
+        _ => None,
     };
-    DisplayList::of(&document.pages[0]).items.iter().map(|item| (colour(item), item.bounds())).collect()
+    DisplayList::of(&document.pages[0]).items.iter().filter_map(fill).collect()
+}
+
+/// The list as letters: `f` a fill, `[` and `]` round what is clipped, `(`
+/// and `)` round what fades together.
+fn steps(document: &Document) -> String {
+    let letter = |item: &Item| match item {
+        Item::Fill(_) => 'f',
+        Item::Clip(_) => '[',
+        Item::Unclip => ']',
+        Item::Fade(..) => '(',
+        Item::Unfade => ')',
+    };
+    DisplayList::of(&document.pages[0]).items.iter().map(letter).collect()
 }
 
 #[test]
@@ -70,9 +87,10 @@ fn an_ellipse_is_an_ellipse() {
     let page = document.pages[0].id;
     add(&mut document, page, NodeKind::Ellipse, (10.0, 20.0), (200.0, 100.0), RED);
     let list = DisplayList::of(&document.pages[0]);
-    let path = &list.items[0].path;
+    let Item::Fill(fill) = &list.items[0] else { panic!() };
+    let path = &fill.path;
     assert!((path.area().abs() - std::f64::consts::PI * 100.0 * 50.0).abs() < 1.0, "{}", path.area());
-    assert!((list.items[0].bounds().x0 - 10.0).abs() < 1e-3 && (list.items[0].bounds().y1 - 120.0).abs() < 1e-3);
+    assert!((fill.bounds().x0 - 10.0).abs() < 1e-3 && (fill.bounds().y1 - 120.0).abs() < 1e-3);
     // The corners of its box are outside it; the middle is inside.
     assert_ne!(path.winding((110.0, 70.0).into()), 0);
     assert_eq!(path.winding((12.0, 22.0).into()), 0);
@@ -101,15 +119,46 @@ fn hidden_nodes_and_hidden_fills_are_left_out() {
 }
 
 #[test]
-fn opacity_carries_down_to_what_is_inside() {
+fn a_nodes_opacity_fades_all_of_it_together() {
     let mut document = Document::default();
     let page = document.pages[0].id;
     let frame = add(&mut document, page, NodeKind::Frame { clip: false }, (0.0, 0.0), (100.0, 100.0), BLUE);
     let rectangle = add(&mut document, frame, NodeKind::Rectangle, (0.0, 0.0), (10.0, 10.0), RED);
     document.node_mut(frame).unwrap().opacity = 0.5;
     document.node_mut(rectangle).unwrap().opacity = 0.5;
+    // The frame and what is in it are drawn as they are and faded as one.
+    // The rectangle is one fill, so it is simply half as strong.
+    assert_eq!(steps(&document), "(ff)");
     let colours: Vec<[u8; 4]> = drawn(&document).into_iter().map(|(colour, _)| colour).collect();
-    assert_eq!(colours, [rgba(BLUE, 128), rgba(RED, 64)]);
+    assert_eq!(colours, [rgba(BLUE, 255), rgba(RED, 128)]);
+    let Item::Fade(opacity, mix) = DisplayList::of(&document.pages[0]).items[0] else { panic!() };
+    assert_eq!((opacity, mix), (0.5, peniko::Mix::Normal));
+    // Two fills on one node fade together too.
+    document.node_mut(rectangle).unwrap().fills.push(Paint::solid(BLUE));
+    assert_eq!(steps(&document), "(f(ff))");
+    // At full strength nothing needs doing.
+    document.node_mut(frame).unwrap().opacity = 1.0;
+    document.node_mut(rectangle).unwrap().opacity = 1.0;
+    assert_eq!(steps(&document), "fff");
+}
+
+#[test]
+fn a_frame_that_clips_does_so_round_its_children_only() {
+    let mut document = Document::default();
+    let page = document.pages[0].id;
+    let frame = add(&mut document, page, NodeKind::Frame { clip: true }, (10.0, 20.0), (100.0, 50.0), BLUE);
+    // Nothing in it: nothing to clip.
+    assert_eq!(steps(&document), "f");
+    add(&mut document, frame, NodeKind::Rectangle, (90.0, 40.0), (30.0, 30.0), RED);
+    document.node_mut(frame).unwrap().stroke = omavec_engine::Stroke { paints: vec![Paint::solid(RED)], weight: 4.0, align: omavec_engine::Align::Outside, ..Default::default() };
+    // Its fill, its children inside the clip, then its stroke outside it.
+    assert_eq!(steps(&document), "f[f]f");
+    let list = DisplayList::of(&document.pages[0]);
+    let Item::Clip(clip) = &list.items[1] else { panic!() };
+    assert_eq!(clip.bounding_box(), Rect::new(10.0, 20.0, 110.0, 70.0));
+    // One that doesn't clip, and a group, are just what is in them.
+    document.node_mut(frame).unwrap().kind = NodeKind::Frame { clip: false };
+    assert_eq!(steps(&document), "fff");
 }
 
 #[test]
@@ -132,8 +181,8 @@ fn a_stroke_is_drawn_over_the_fill_and_a_frames_over_its_children() {
     let page = document.pages[0].id;
     let frame = add(&mut document, page, NodeKind::Frame { clip: false }, (0.0, 0.0), (100.0, 100.0), BLUE);
     let rectangle = add(&mut document, frame, NodeKind::Rectangle, (10.0, 10.0), (50.0, 20.0), RED);
-    document.node_mut(frame).unwrap().stroke = Stroke { paints: vec![Paint::solid(black)], weight: 4.0, align: Align::Outside };
-    document.node_mut(rectangle).unwrap().stroke = Stroke { paints: vec![Paint::solid(black)], weight: 2.0, align: Align::Inside };
+    document.node_mut(frame).unwrap().stroke = Stroke { paints: vec![Paint::solid(black)], weight: 4.0, align: Align::Outside, ..Default::default() };
+    document.node_mut(rectangle).unwrap().stroke = Stroke { paints: vec![Paint::solid(black)], weight: 2.0, align: Align::Inside, ..Default::default() };
 
     let drawn = drawn(&document);
     let colours: Vec<[u8; 4]> = drawn.iter().map(|(colour, _)| *colour).collect();
@@ -155,8 +204,91 @@ fn a_stroke_is_saved_only_when_there_is_one() {
     let mut document = Document::default();
     let mut node = document.create(NodeKind::Rectangle, Size::new(10.0, 10.0));
     assert!(!serde_json::to_string(&node).unwrap().contains("stroke"));
-    node.stroke = Stroke { paints: vec![Paint::solid(RED)], weight: 2.5, align: Align::Center };
+    node.stroke = Stroke { paints: vec![Paint::solid(RED)], weight: 2.5, align: Align::Center, ..Default::default() };
     let text = serde_json::to_string(&node).unwrap();
     assert!(text.contains(r##""stroke":{"paints":[{"type":"solid","color":"#ff0000"}],"weight":2.5,"align":"center"}"##), "{text}");
     assert_eq!(serde_json::from_str::<omavec_engine::Node>(&text).unwrap(), node);
+}
+
+#[test]
+fn every_closed_shape_keeps_an_inside_stroke_inside_it() {
+    use omavec_engine::{Align, Stroke};
+    let kinds = [NodeKind::Frame { clip: true }, NodeKind::Rectangle, NodeKind::Ellipse, NodeKind::Arc { start: 0.3, sweep: 4.0, ratio: 0.4 }, NodeKind::Polygon { sides: 5 }, NodeKind::Star { points: 5, ratio: 0.4 }];
+    for kind in kinds {
+        let mut document = Document::default();
+        let page = document.pages[0].id;
+        let id = add(&mut document, page, kind.clone(), (10.0, 20.0), (200.0, 100.0), BLUE);
+        let stroke = |align| Stroke { paints: vec![Paint::solid(RED)], weight: 8.0, align, ..Default::default() };
+        let bounds = |document: &Document| drawn(document).into_iter().map(|(_, bounds)| bounds).collect::<Vec<_>>();
+        document.node_mut(id).unwrap().stroke = stroke(Align::Inside);
+        let [fill, inside] = bounds(&document)[..] else { panic!("{kind:?}") };
+        let grown = |by: f64| fill.inflate(by, by);
+        assert!(grown(1e-6).contains_rect(inside) && inside.contains_rect(grown(-1e-2)), "{kind:?}: {inside:?} in {fill:?}");
+        // And an outside one reaches beyond it: by its weight, or less
+        // past a point too sharp to mitre.
+        document.node_mut(id).unwrap().stroke = stroke(Align::Outside);
+        let outside = bounds(&document)[1];
+        assert!(outside.contains_rect(grown(2.0)) && grown(8.0 * 4.0).contains_rect(outside), "{kind:?}: {outside:?} round {fill:?}");
+    }
+}
+
+#[test]
+fn a_line_is_its_stroke_and_new_kinds_are_saved_by_name() {
+    let mut document = Document::default();
+    let page = document.pages[0].id;
+    let mut line = document.create(NodeKind::Line, Size::new(100.0, 0.0));
+    line.transform = Affine::translate((10.0, 50.0));
+    line.stroke.weight = 4.0;
+    document.insert(page, 0, line.clone()).unwrap();
+    // Black, down the middle of the line, and no fill.
+    assert_eq!(drawn(&document), [(rgba(Color::rgb(0, 0, 0), 255), Rect::new(10.0, 48.0, 110.0, 52.0))]);
+    // It is hit along its stroke, and a little beyond a thin one.
+    let hit = |document: &Document, x: f64, y: f64| !document.pages[0].hit((x, y).into()).is_empty();
+    assert!(hit(&document, 60.0, 51.5) && hit(&document, 9.0, 50.0) && !hit(&document, 60.0, 53.0) && !hit(&document, 113.0, 50.0));
+
+    let text = serde_json::to_string(&line).unwrap();
+    assert!(text.contains(r#""type":"line""#) && text.contains(r##""stroke":{"paints":[{"type":"solid","color":"#000000"}],"weight":4.0,"align":"center"}"##), "{text}");
+    assert_eq!(serde_json::from_str::<omavec_engine::Node>(&text).unwrap(), line);
+    line.stroke.end_cap = omavec_engine::Cap::Arrow;
+    assert!(serde_json::to_string(&line).unwrap().contains(r#""align":"center","end_cap":"arrow"}"#));
+
+    let mut star = document.create(NodeKind::Star { points: 5, ratio: 0.382 }, Size::new(10.0, 10.0));
+    let text = serde_json::to_string(&star).unwrap();
+    assert!(text.contains(r#""type":"star","points":5,"ratio":0.382"#) && !text.contains("radii"), "{text}");
+    assert_eq!(serde_json::from_str::<omavec_engine::Node>(&text).unwrap(), star);
+    star.kind = NodeKind::Rectangle;
+    star.radii = [4.0, 4.0, 0.0, 0.0];
+    assert!(serde_json::to_string(&star).unwrap().contains(r#""radii":[4.0,4.0,0.0,0.0]"#));
+    // Shapes are hit on their shape: the middle of a star, not between its points.
+    star.kind = NodeKind::Star { points: 5, ratio: 0.382 };
+    star.size = Size::new(100.0, 100.0);
+    star.transform = Affine::translate((200.0, 0.0));
+    document.insert(page, 1, star).unwrap();
+    assert!(hit(&document, 250.0, 50.0) && hit(&document, 250.0, 5.0) && !hit(&document, 215.0, 10.0));
+}
+
+#[test]
+fn a_gradient_is_laid_out_in_its_nodes_box_and_saved_as_its_stops() {
+    use omavec_engine::{PaintKind, Stop};
+    let mut document = Document::default();
+    let page = document.pages[0].id;
+    let id = add(&mut document, page, NodeKind::Rectangle, (10.0, 20.0), (200.0, 100.0), RED);
+    // Stops out of order in the file are drawn in order.
+    let stops = vec![Stop { at: 1.0, color: BLUE, opacity: 0.5 }, Stop { at: 0.0, color: RED, opacity: 1.0 }];
+    let node = document.node_mut(id).unwrap();
+    node.fills[0].kind = PaintKind::Linear { from: (0.0, 0.5), to: (1.0, 0.5), stops };
+    node.fills[0].opacity = 0.5;
+    let list = DisplayList::of(&document.pages[0]);
+    let [Item::Fill(fill)] = &list.items[..] else { panic!() };
+    let peniko::Brush::Gradient(gradient) = &fill.brush else { panic!("not a gradient") };
+    let drawn: Vec<(f32, [u8; 4])> = gradient.stops.iter().map(|stop| (stop.offset, stop.color.to_alpha_color::<peniko::color::Srgb>().to_rgba8().to_u8_array())).collect();
+    assert_eq!(drawn, [(0.0, [255, 0, 0, 128]), (1.0, [0, 0, 255, 64])]);
+    // A unit square stretched over the node: its corner to (10, 20), and
+    // (1, 1) to the far corner.
+    assert_eq!(fill.transform * omavec_geom::kurbo::Point::new(1.0, 1.0), (210.0, 120.0).into());
+    assert_eq!(fill.transform * omavec_geom::kurbo::Point::ZERO, (10.0, 20.0).into());
+
+    let text = serde_json::to_string(&document.node(id).unwrap().fills[0]).unwrap();
+    assert_eq!(text, r##"{"type":"linear","from":[0.0,0.5],"to":[1.0,0.5],"stops":[{"at":1.0,"color":"#0000ff","opacity":0.5},{"at":0.0,"color":"#ff0000"}],"opacity":0.5}"##);
+    assert_eq!(serde_json::from_str::<Paint>(&text).unwrap(), document.node(id).unwrap().fills[0]);
 }

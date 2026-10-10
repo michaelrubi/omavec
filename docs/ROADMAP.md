@@ -5,12 +5,13 @@ the architecture; [DECISIONS.md](DECISIONS.md) records why. As in Omapix,
 finished items are ~~struck through~~ with "(done)", and anything deferred
 goes on a "Later:" line under the item.
 
-Status: Phase 0 is done bar Michael trying the shell by hand. Phase 1 is
-well under way: you can draw frames, rectangles and ellipses; select,
-move, resize, rotate and delete them; give them fills and strokes; rename,
-hide and lock layers; undo and redo; save to a `.omavec` folder or a
-`.omavecz` file; and export frames as SVG and PNG from a terminal. None of
-it has been tried by hand yet.
+Status: Phase 0 is done. Phase 1 is built as far as its exit test: you
+can draw frames and every shape, select, move, resize, turn, group and
+restack them, give them fills, gradients, strokes and blend modes, undo
+and redo, save and reopen, and export from the app and from a terminal.
+What each bullet still lacks is listed under it as "Left" or "Later". None
+of it has been tried by hand yet: it is tested headless, and the
+installed binary has been driven by `omavec run`.
 
 ## Borrowing from VectorCraft
 
@@ -103,8 +104,8 @@ go into DESIGN.md.
   canvas (`crates/omavec/src/canvas.rs`): `OMAVEC_BLOBS=10000 omavec`
   shows the test scene to pan and zoom by hand, with the zoom and the
   last frame's time in the corner.
-  Later: delete `examples/canvas_bench.rs`, the `vello` dev-dependency and
-  `omavec_render::spike` once documents can be drawn.
+  `examples/canvas_bench.rs` and the `vello` dev-dependency went once
+  documents could be drawn; `omavec_render::spike` stays as the test scene.
 - ~~**Spike: blurs and shadows.** Prototype a drop shadow and a layer blur
   on an arbitrary path with the renderer picked above. VectorCraft draws
   both as `vello_cpu` filter layers (`crates/render/src/fx.rs`): start
@@ -192,8 +193,17 @@ reopen and export.
   closing the window would throw them away. `.omavecz` is built in the
   engine (the same files zipped, the same bytes for the same document)
   with its MIME type and launcher entry; Save As takes a name ending in
-  `.omavecz`, and Open takes one, or the `document.json` in a folder. Left: assets, recent files, and
-  autosave and crash recovery.
+  `.omavecz`, and Open takes one, or the `document.json` in a folder.
+  File → Open Recent lists the last ten documents opened or saved
+  (`~/.config/omavec/recent.toml`). While a document has unsaved changes a
+  copy of it is written every thirty seconds, off the UI thread, to
+  `~/.local/state/omavec/recovery/`, and removed when the changes are
+  saved or given up; a copy still there at the next start, from a session
+  that is no longer running, is offered back (Recover, Discard, Not Now).
+  Left: assets, which wait for the first node that has one (images,
+  Phase 5).
+  Later: autosave into the document itself, as a setting; more than one
+  recovery copy offered at a time.
 - ~~Canvas: pan (Space/H/middle drag), zoom (Ctrl+wheel, Shift+0/1/2, pinch),
   pixel grid at high zoom, rulers.~~ (done) The wheel, middle drag,
   Space+drag and the Hand tool (H) pan; Ctrl+wheel and a pinch zoom about
@@ -202,11 +212,17 @@ reopen and export.
   from 400% (Shift+' toggles it) and Shift+R shows rulers.
   Later: the pointer's position marked on the rulers; guides dragged out
   of them.
-- Selection: click, Shift+click, marquee, deep select (Ctrl+click), select
-  in group (double-click / Enter), Esc to parent. Built so far: click
-  (the page's child, or what is inside a top-level frame), Shift+click to
-  add or take away, a click on nothing to clear, and an outline round
-  what is selected. Hidden and locked nodes can't be clicked.
+- ~~Selection: click, Shift+click, marquee, deep select (Ctrl+click), select
+  in group (double-click / Enter), Esc to parent.~~ (done) A click selects
+  the page's child, what is in a top-level frame, or what is beside the
+  selection; Ctrl+click the deepest node there; a double click one deeper.
+  Shift adds or takes away. A drag from nothing, or from the background of
+  a top-level frame with things in it, is a marquee. Enter selects the
+  children, Shift+Enter the parent and Ctrl+A everything alongside; Esc
+  clears the selection, as in Figma, rather than going to the parent.
+  Hidden and locked nodes can't be clicked.
+  Later: a marquee tests boxes, so it catches a turned node by the box
+  round it.
 - ~~Tools as in `vectorcraft-tools`: pointer events in, Begin/Preview/Commit
   actions out, so every drag is one undo step and every tool is testable
   without a window.~~ (done) `crates/omavec/src/tools.rs` takes presses,
@@ -215,20 +231,37 @@ reopen and export.
 - Transform: move, resize and rotate handles; Shift/Alt modifiers; nudge
   with arrows (Shift: 10); numeric X/Y/W/H/rotation in the properties panel.
   Built so far: dragging the selection moves it, as one undo step, also
-  inside rotated or scaled frames; Esc puts it back; Delete removes it.
-  One selected node resizes by its corners and anywhere along its edges,
-  along its own sides if it is rotated, with Shift keeping proportions and
-  Alt resizing about the middle. Arrows nudge by 1, or 10 with Shift. The
-  Design panel has X, Y, W, H and rotation to drag or type; rotation is
-  about the middle, anticlockwise as in Figma. Left: rotate handles,
-  resizing several nodes at once, resize cursors, Shift to keep a move on
-  one axis, and children that follow their frame (constraints, Phase 5).
+  inside rotated or scaled frames, along one axis with Shift, and as a copy
+  with Alt; Esc puts it back; Delete removes it. The selection's box
+  resizes by its corners and anywhere along its edges, with Shift keeping
+  proportions and Alt resizing about the middle: one node along its own
+  sides if it is turned, and several nodes or a group together, each kept
+  at its angle. The space just outside a corner turns the selection about
+  its middle, by 15° at a time with Shift. The pointer shows which it would
+  do. Arrows nudge by 1, or 10 with Shift. The Design panel has X, Y, W, H
+  and rotation to drag or type, for a group too; rotation is about the
+  middle, anticlockwise as in Figma. Left: children that follow their
+  frame (constraints, Phase 5).
+  Later: a pointer of its own for turning (egui has none; it shows the
+  alias arrow).
 - Tools: Frame (artboards = top-level frames, with Figma's device presets),
   Rectangle (per-corner radii), Ellipse (arc/ratio), Polygon, Star, Line,
-  Arrow. Built so far: Frame (F), Rectangle (R) and Ellipse (O) by
-  dragging, a square or circle with Shift, from the middle with Alt, 100 ×
-  100 on a click; a shape started over a frame goes into it; the tool
-  hands back to Move (V). Left: presets, radii, arcs, and the other four.
+  Arrow. Built so far: Frame (F), Rectangle (R), Ellipse (O), Polygon,
+  Star, Line (L) and Arrow (Shift+L) by dragging: a square or circle with
+  Shift, from the middle with Alt, 100 × 100 on a click; a line to the
+  nearest 45° with Shift; a shape started over a frame goes into it; the
+  tool hands back to Move (V). What a tool draws is named and numbered as
+  in Figma ("Frame 1", "Rectangle 2"). A line is reshaped by dragging
+  either end.
+  The Design panel has a frame's or rectangle's corner radius and whether
+  a frame clips, an ellipse's start, sweep and ratio (which make it a pie
+  slice or a ring), a polygon's count, and a star's count and ratio. The
+  outlines are `omavec_geom::shapes`. A frame's size can be picked from
+  presets (phones, tablets, laptops, and a few for icons and logos).
+  Left: a frame made at a preset's size straight from the Frame tool; a
+  radius for each corner in the panel (the file and the renderer have
+  them); rounded corners on polygons and stars; and handles on the canvas
+  for radius and arc.
 - Paint: solid fills and strokes, multiple fills, opacity, blend modes;
   linear/radial/angular/diamond gradients with on-canvas handles; the
   colour picker with eyedropper. Built so far: a stack of solid fills per
@@ -239,36 +272,90 @@ reopen and export.
   panel lists one selected node's fills and stroke paints, top first,
   with a colour picker, opacity, a show/hide box and add and remove, and
   the stroke's weight and side; a drag on any of them is one undo step.
-  Left: blend modes, gradients, the eyedropper, caps, joins and dashes,
-  and editing several nodes at once.
-  Later: a node's opacity as a layer, not multiplied into its children;
-  frames that clip what they draw (hit testing already respects it); a
-  stroke counted in hit testing and in a node's bounds; the hairline of
-  backdrop that shows between a fill and an outside stroke where their
-  antialiased edges meet.
+  A stroke also has a join (mitre, bevel, round) and, on a line, a cap
+  for each end: none, round, square, an open arrowhead or a filled one.
+  The panel has the node's own opacity too.
+  A paint can be a linear or a radial gradient: stops of colour, place
+  and opacity, laid out in the node's box, drawn by `vello_cpu` and
+  written to SVG as `linearGradient` and `radialGradient`; the panel turns
+  a colour into one and back, and has the stops and a linear one's angle.
+  A node has a blend mode, one of Figma's sixteen, drawn as a layer and
+  written to SVG as `mix-blend-mode`.
+  The eyedropper (I) gives the selection the colour the canvas shows
+  under a click as its fill.
+  Left: a blend mode for each paint, angular and diamond gradients (SVG
+  has neither), a gradient's handles on the canvas, an eyedropper in the
+  colour picker itself and for strokes, dashes, and editing several nodes
+  at once.
+  A node's opacity fades the whole of it as one layer, and a frame that
+  clips hides what its children draw outside it, on the canvas and in
+  exported PNG and SVG alike.
+  Later: a stroke counted in hit testing and in a node's bounds; the
+  hairline of backdrop that shows between a fill and an outside stroke
+  where their antialiased edges meet; an arrowhead whose point stops at
+  the end of the line (it reaches up to the stroke's weight past it, so
+  that the line's square end is inside it).
 - Panels: layers (tree, rename, reorder by drag, hide, lock, multi-select),
   properties (Figma's right panel layout). Built so far: the layers panel
   (select, Shift-select, rename by double-click, hide and lock per row and
-  by Ctrl+Shift+H / Ctrl+Shift+L); reordering by drag and the rest of the
-  properties panel are left.
+  by Ctrl+Shift+H / Ctrl+Shift+L, and dragging rows to another place in
+  the stack or into a frame or group, which leaves them where they are on
+  the page), and a Design panel with what is listed under Transform,
+  Tools, Paint and Export. Left: collapsing a container's rows; the Design
+  panel laid out as Figma's is (it is rows of labelled numbers so far)
+  and for more than one node at a time.
 - Smart guides and snapping: edges, centres, equal spacing, pixel grid.
-- Group (Ctrl+G), frame selection (Ctrl+Alt+G), duplicate (Ctrl+D,
-  Alt+drag), copy/paste within Omavec and as SVG to the Wayland clipboard.
-- Export: per-node export settings (SVG, PNG @1x/@2x/@3x); `omavec export`
+  Built so far: a move lines the selection's edges and middle up with
+  those of what is beside it, and of the frame it is in, when they come
+  within six points, and shows a red line through whatever is lined up;
+  a corner or an edge being resized, a shape being drawn and the end of a
+  line do the same. Otherwise they keep to whole units, as Figma's pixel
+  grid does. Ctrl+Shift+' turns both off. The arithmetic is
+  `omavec_geom::snap`. Left: equal spacing; snapping for what is turned,
+  or in a frame that is; and for several nodes resized together.
+- ~~Group (Ctrl+G), frame selection (Ctrl+Alt+G), duplicate (Ctrl+D,
+  Alt+drag), copy/paste within Omavec and as SVG to the Wayland clipboard.~~
+  (done) Also ungroup (Ctrl+Shift+G), cut, and bring forward, send
+  backward, to front and to back (Ctrl+], Ctrl+[, ], [). A frame made from
+  the selection has no fill and doesn't clip, so nothing looks different.
+  Later: pasting SVG copied in another app (Phase 2's importer), and
+  between two Omavec windows.
+- ~~Export: per-node export settings (SVG, PNG @1x/@2x/@3x); `omavec export`
   CLI; `vello_cpu` for headless PNG. `vectorcraft-svg`'s writer is the
-  reference for the SVG side.
-  Built so far: `omavec_engine::svg::write` turns a node into SVG
-  (`<rect>`, `<ellipse>` and `<g>`, translations folded into `x`/`y`,
-  numbers to three decimals), and a test rasterises it with resvg and
-  compares it with our own rendering, pixel by pixel. `omavec export
-  file.omavec --frame Logo --format svg,png@2x --out dist/` writes
-  top-level frames with no window: every frame if none is named, PNG at 1×
-  if no format is. Left: exporting from the app, export settings kept on
-  nodes, anything that isn't a top-level frame, clipping, and layer names
-  as ids.
-- `OMAVEC_SCRIPT` replay and the egui `Harness` for UI tests.
-- Command palette (Ctrl+K, Ctrl+/) listing every `Command`, and `:` to
-  open it as a command line.
+  reference for the SVG side.~~ (done) `omavec_engine::svg::write` turns a
+  node into SVG (the plainest element that says each shape, translations
+  folded into `x`/`y`, numbers to three decimals), and a test rasterises it
+  with resvg and compares it with our own rendering, pixel by pixel. A
+  node keeps a list of export settings (SVG, or PNG at a scale) in the
+  file; the Design panel edits them. Export… (Ctrl+Shift+E, or the
+  panel's button) asks for a folder and writes the selection, or with
+  nothing selected every top-level frame, each as its settings say, or as
+  a PNG if it has none. `omavec export file.omavec --frame Logo --format
+  svg,png@2x --out dist/` does the same with no window: every frame if
+  none is named, each frame's own settings if no format is.
+  A frame is exported as its box; anything else as all that it paints,
+  so a stroke outside the shape, an arrowhead, or a line (whose box has no
+  height) comes out whole. Two nodes of one name are two files, the
+  second `Name-2`.
+  Later: a suffix for each setting; layer names as ids in the SVG;
+  `--node` in the CLI for something that isn't a top-level frame.
+- ~~`OMAVEC_SCRIPT` replay and the egui `Harness` for UI tests.~~ (done)
+  A script is steps between commas: any `Command` by name, a tool and
+  where to drag it (`Rectangle 20 20 100 80`, `Line 0 0 30 40`), `Click`
+  and `Drag` on the page, and `Open`, `Save` and `Export` with a path.
+  `OMAVEC_SCRIPT="…" omavec` takes them a step a frame in the window;
+  `omavec run "…" [file.omavec]` takes them with no window and stops at
+  the first that goes wrong. The pointer's steps go to the tools exactly
+  as the pointer's do. UI tests drive a headless `egui::Context` frame by
+  frame (`app.rs`, `canvas.rs`, `layers_panel.rs`).
+  Later: steps for what the Design panel sets (fill, stroke, radius), so
+  a script can style what it draws.
+- ~~Command palette (Ctrl+K, Ctrl+/) listing every `Command`, and `:` to
+  open it as a command line.~~ (done) It filters as you type (the start of
+  the name first, then the start of a word, then anywhere, then the
+  letters in order), with arrows, Enter and Esc. What is typed that is no
+  command's name is taken as a line of script, so `:Rectangle 0 0 100
+  100` draws one. Written by Antigravity to a brief.
 
 Exit: draw a few shapes in two frames, style them, save, reopen, undo
 through the session, and export the frames as SVG and PNG from the app and

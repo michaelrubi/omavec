@@ -2,41 +2,47 @@
 //! back to front. It is what the renderer draws, on the canvas and for
 //! export alike.
 
-use omavec_geom::kurbo::{Affine, BezPath, Ellipse, Rect, Shape};
+use omavec_geom::kurbo::{Affine, BezPath, Rect, Shape};
 use omavec_geom::stroke::outline;
 
 use crate::document::{Node, NodeKind};
 use crate::paint::PaintKind;
 
-/// How far an ellipse's path may stray from the true curve, in document
-/// units: a quarter of a pixel at the deepest zoom.
-const TOLERANCE: f64 = 1e-3;
+/// One filled path, in document units.
+pub struct Fill {
+    pub path: BezPath,
+    pub brush: peniko::Brush,
+    /// From the brush's own coordinates to the document's. A gradient is
+    /// laid out in its node's box, a unit square.
+    pub transform: Affine,
+    bounds: Rect,
+}
 
-/// A node's own shape as a path, in its own coordinates. Pages and groups
-/// have none.
-pub(crate) fn shape(node: &Node) -> Option<BezPath> {
-    let bounds = Rect::from_origin_size((0.0, 0.0), node.size);
-    match node.kind {
-        NodeKind::Page | NodeKind::Group => None,
-        NodeKind::Frame { .. } | NodeKind::Rectangle => Some(bounds.to_path(TOLERANCE)),
-        NodeKind::Ellipse => Some(Ellipse::from_rect(bounds).to_path(TOLERANCE)),
+impl Fill {
+    pub fn bounds(&self) -> Rect {
+        self.bounds
     }
 }
 
-/// One filled path, in document units.
-pub struct Item {
-    pub path: BezPath,
-    pub color: peniko::Color,
-    bounds: Rect,
+/// One step of drawing a page.
+// Nearly every item is a fill, so boxing them would save nothing.
+#[allow(clippy::large_enum_variant)]
+pub enum Item {
+    Fill(Fill),
+    /// Until the `Unclip` that matches it, only what is inside the path shows.
+    Clip(BezPath),
+    Unclip,
+    /// Until the `Unfade` that matches it, what is drawn is drawn together
+    /// and then let through at this opacity, so where two things in it
+    /// overlap neither shows through the other, and mixed with what is
+    /// under it in this way.
+    Fade(f32, peniko::Mix),
+    Unfade,
 }
 
 impl Item {
     pub fn new(path: BezPath, color: peniko::Color) -> Self {
-        Self { bounds: path.bounding_box(), path, color }
-    }
-
-    pub fn bounds(&self) -> Rect {
-        self.bounds
+        Item::Fill(Fill { bounds: path.bounding_box(), path, brush: color.into(), transform: Affine::IDENTITY })
     }
 }
 
@@ -46,44 +52,102 @@ pub struct DisplayList {
     pub items: Vec<Item>,
 }
 
+/// The part of `node`'s own coordinates that an export of it shows. A
+/// frame is exported as its box, as in Figma; anything else as all that it
+/// paints, strokes and arrowheads included, out to whole units, so a line,
+/// whose box has no height, still makes a picture.
+pub fn export_area(node: &Node) -> Rect {
+    if matches!(node.kind, NodeKind::Frame { .. }) {
+        return node.bounds();
+    }
+    // As it paints with no transform of its own: upright, at its origin.
+    let mut upright = node.clone();
+    upright.transform = Affine::IDENTITY;
+    DisplayList::of(&upright).painted().map_or(node.bounds(), |painted| painted.union(node.bounds()).expand())
+}
+
 impl DisplayList {
+    /// The box round everything the list paints, less what its clips cut
+    /// off; `None` if it paints nothing.
+    pub fn painted(&self) -> Option<Rect> {
+        let (mut clips, mut area): (Vec<Rect>, Option<Rect>) = (Vec::new(), None);
+        for item in &self.items {
+            match item {
+                Item::Clip(path) => clips.push(path.bounding_box()),
+                Item::Unclip => drop(clips.pop()),
+                Item::Fill(fill) => {
+                    let shown = clips.iter().fold(fill.bounds(), |shown, clip| shown.intersect(*clip));
+                    if shown.width() > 0.0 && shown.height() > 0.0 {
+                        area = Some(area.map_or(shown, |area| area.union(shown)));
+                    }
+                }
+                Item::Fade(..) | Item::Unfade => {}
+            }
+        }
+        area
+    }
+
     /// Everything visible on `page`.
     pub fn of(page: &Node) -> Self {
         let mut list = Self::default();
-        list.add(page, Affine::IDENTITY, 1.0);
+        list.add(page, Affine::IDENTITY);
         list
     }
 
-    fn add(&mut self, node: &Node, parent: Affine, opacity: f64) {
+    fn add(&mut self, node: &Node, parent: Affine) {
         if !node.visible {
             return;
         }
         let transform = parent * node.transform;
-        // Later: a node's opacity belongs to the node as a whole, so where
-        // its children overlap this shows through and a layer wouldn't.
-        let opacity = opacity * node.opacity;
-        let path = shape(node);
+        let path = node.shape();
+        let stroked = node.stroke.weight > 0.0 && node.stroke.paints.iter().any(|paint| paint.visible);
+        // A node's opacity is the node's as a whole. One paint and nothing
+        // else can simply be that much fainter; anything more is drawn
+        // together first.
+        let paints = node.fills.iter().filter(|paint| paint.visible).count() + if stroked { node.stroke.paints.iter().filter(|paint| paint.visible).count() } else { 0 };
+        let blended = node.blend != crate::paint::Blend::Normal;
+        let together = blended || node.opacity < 1.0 && (paints > 1 || !node.children.is_empty());
+        let opacity = if together { 1.0 } else { node.opacity };
+        if together {
+            self.items.push(Item::Fade(node.opacity.clamp(0.0, 1.0) as f32, node.blend.mix()));
+        }
         let paint = |list: &mut Self, path: &BezPath, paints: &[crate::paint::Paint]| {
             let path = transform * path.clone();
             // A stroke with no weight has no area to paint.
             for paint in paints.iter().filter(|paint| paint.visible && !path.elements().is_empty()) {
-                let PaintKind::Solid { color } = paint.kind;
-                let alpha = (opacity * paint.opacity).clamp(0.0, 1.0) as f32;
-                list.items.push(Item::new(path.clone(), peniko::Color::from_rgb8(color.r, color.g, color.b).with_alpha(alpha)));
+                let strength = opacity * paint.opacity;
+                let color = |color: crate::paint::Color, opacity: f64| peniko::Color::from_rgb8(color.r, color.g, color.b).with_alpha((strength * opacity).clamp(0.0, 1.0) as f32);
+                let stops = |stops: Vec<crate::paint::Stop>| stops.into_iter().map(|stop| (stop.at.clamp(0.0, 1.0) as f32, color(stop.color, stop.opacity))).collect::<Vec<_>>();
+                let brush: peniko::Brush = match (&paint.kind, paint.kind.stops()) {
+                    (PaintKind::Linear { from, to, .. }, Some(along)) => peniko::Gradient::new_linear(*from, *to).with_stops(&stops(along)[..]).into(),
+                    (PaintKind::Radial { from, to, .. }, Some(along)) => peniko::Gradient::new_radial(*from, (to.0 - from.0).hypot(to.1 - from.1) as f32).with_stops(&stops(along)[..]).into(),
+                    (kind, _) => color(kind.color(), 1.0).into(),
+                };
+                let Item::Fill(mut fill) = Item::new(path.clone(), peniko::Color::TRANSPARENT) else { continue };
+                (fill.brush, fill.transform) = (brush, transform * Affine::scale_non_uniform(node.size.width, node.size.height));
+                list.items.push(Item::Fill(fill));
             }
         };
         if let Some(path) = &path {
             paint(self, path, &node.fills);
         }
-        // Later: a frame with `clip` on hides what its children draw outside it.
+        // A frame that clips shows nothing of its children outside itself.
+        let clip = path.as_ref().filter(|_| matches!(node.kind, NodeKind::Frame { clip: true }) && !node.children.is_empty());
+        if let Some(path) = clip {
+            self.items.push(Item::Clip(transform * path.clone()));
+        }
         for child in &node.children {
-            self.add(child, transform, opacity);
+            self.add(child, transform);
+        }
+        if clip.is_some() {
+            self.items.push(Item::Unclip);
         }
         // The stroke goes over the fill, and a frame's over what is in it.
-        if let Some(path) = &path
-            && node.stroke.paints.iter().any(|paint| paint.visible)
-        {
-            paint(self, &outline(path, node.stroke.weight, node.stroke.align), &node.stroke.paints);
+        if let Some(path) = path.as_ref().filter(|_| stroked) {
+            paint(self, &outline(path, &node.stroke.style()), &node.stroke.paints);
+        }
+        if together {
+            self.items.push(Item::Unfade);
         }
     }
 }

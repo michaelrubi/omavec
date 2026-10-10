@@ -1,6 +1,5 @@
-//! Phase 0's test scene: random cubic blobs, for `examples/canvas_bench.rs`
-//! and for trying the canvas by hand (`OMAVEC_BLOBS=10000 omavec`). It goes
-//! when there are documents to draw.
+//! Phase 0's test scene: random cubic blobs, for trying the canvas by hand
+//! with more paths than a document yet has (`OMAVEC_BLOBS=10000 omavec`).
 
 use kurbo::{BezPath, Point, Vec2};
 use peniko::Color;

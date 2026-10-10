@@ -7,12 +7,28 @@ use egui::{Key, KeyboardShortcut, Modifiers};
 pub enum Command {
     New,
     Open,
+    OpenRecent,
     Save,
     SaveAs,
+    Export,
     Quit,
     Undo,
     Redo,
     Delete,
+    Cut,
+    Copy,
+    Paste,
+    Duplicate,
+    SelectAll,
+    SelectChildren,
+    SelectParent,
+    Group,
+    Ungroup,
+    FrameSelection,
+    BringToFront,
+    BringForward,
+    SendBackward,
+    SendToBack,
     Cancel,
     NudgeLeft,
     NudgeRight,
@@ -23,6 +39,11 @@ pub enum Command {
     FrameTool,
     RectangleTool,
     EllipseTool,
+    PolygonTool,
+    StarTool,
+    LineTool,
+    ArrowTool,
+    EyedropperTool,
     ZoomIn,
     ZoomOut,
     ZoomTo100,
@@ -30,21 +51,39 @@ pub enum Command {
     ZoomToSelection,
     ToggleRulers,
     TogglePixelGrid,
+    ToggleSnap,
     ToggleUi,
+    Palette,
     ToggleVisible,
     ToggleLocked,
 }
 
 impl Command {
-    pub const ALL: [Command; 28] = [
+    pub const ALL: [Command; 51] = [
         Command::New,
         Command::Open,
+        Command::OpenRecent,
         Command::Save,
         Command::SaveAs,
+        Command::Export,
         Command::Quit,
         Command::Undo,
         Command::Redo,
         Command::Delete,
+        Command::Cut,
+        Command::Copy,
+        Command::Paste,
+        Command::Duplicate,
+        Command::SelectAll,
+        Command::SelectChildren,
+        Command::SelectParent,
+        Command::Group,
+        Command::Ungroup,
+        Command::FrameSelection,
+        Command::BringToFront,
+        Command::BringForward,
+        Command::SendBackward,
+        Command::SendToBack,
         Command::Cancel,
         Command::NudgeLeft,
         Command::NudgeRight,
@@ -55,6 +94,11 @@ impl Command {
         Command::FrameTool,
         Command::RectangleTool,
         Command::EllipseTool,
+        Command::PolygonTool,
+        Command::StarTool,
+        Command::LineTool,
+        Command::ArrowTool,
+        Command::EyedropperTool,
         Command::ZoomIn,
         Command::ZoomOut,
         Command::ZoomTo100,
@@ -62,7 +106,9 @@ impl Command {
         Command::ZoomToSelection,
         Command::ToggleRulers,
         Command::TogglePixelGrid,
+        Command::ToggleSnap,
         Command::ToggleUi,
+        Command::Palette,
         Command::ToggleVisible,
         Command::ToggleLocked,
     ];
@@ -71,12 +117,28 @@ impl Command {
         match self {
             Command::New => "New",
             Command::Open => "Open…",
+            Command::OpenRecent => "Reopen Last Document",
             Command::Save => "Save",
             Command::SaveAs => "Save As…",
+            Command::Export => "Export…",
             Command::Quit => "Quit",
             Command::Undo => "Undo",
             Command::Redo => "Redo",
             Command::Delete => "Delete",
+            Command::Cut => "Cut",
+            Command::Copy => "Copy",
+            Command::Paste => "Paste",
+            Command::Duplicate => "Duplicate",
+            Command::SelectAll => "Select All",
+            Command::SelectChildren => "Select Children",
+            Command::SelectParent => "Select Parent",
+            Command::Group => "Group Selection",
+            Command::Ungroup => "Ungroup Selection",
+            Command::FrameSelection => "Frame Selection",
+            Command::BringToFront => "Bring to Front",
+            Command::BringForward => "Bring Forward",
+            Command::SendBackward => "Send Backward",
+            Command::SendToBack => "Send to Back",
             Command::Cancel => "Cancel",
             Command::NudgeLeft => "Nudge Left",
             Command::NudgeRight => "Nudge Right",
@@ -87,6 +149,11 @@ impl Command {
             Command::FrameTool => "Frame",
             Command::RectangleTool => "Rectangle",
             Command::EllipseTool => "Ellipse",
+            Command::PolygonTool => "Polygon",
+            Command::StarTool => "Star",
+            Command::LineTool => "Line",
+            Command::ArrowTool => "Arrow",
+            Command::EyedropperTool => "Eyedropper",
             Command::ZoomIn => "Zoom In",
             Command::ZoomOut => "Zoom Out",
             Command::ZoomTo100 => "Zoom to 100%",
@@ -94,7 +161,9 @@ impl Command {
             Command::ZoomToSelection => "Zoom to Selection",
             Command::ToggleRulers => "Rulers",
             Command::TogglePixelGrid => "Pixel Grid",
+            Command::ToggleSnap => "Snapping",
             Command::ToggleUi => "Show/Hide UI",
+            Command::Palette => "Command Palette…",
             Command::ToggleVisible => "Show/Hide Selection",
             Command::ToggleLocked => "Lock/Unlock Selection",
         }
@@ -108,10 +177,25 @@ impl Command {
             Command::Open => (Modifiers::COMMAND, Key::O),
             Command::Save => (Modifiers::COMMAND, Key::S),
             Command::SaveAs => (both, Key::S),
+            Command::Export => (both, Key::E),
             Command::Quit => (Modifiers::COMMAND, Key::Q),
             Command::Undo => (Modifiers::COMMAND, Key::Z),
             Command::Redo => (both, Key::Z),
             Command::Delete => (Modifiers::NONE, Key::Delete),
+            Command::Cut => (Modifiers::COMMAND, Key::X),
+            Command::Copy => (Modifiers::COMMAND, Key::C),
+            Command::Paste => (Modifiers::COMMAND, Key::V),
+            Command::Duplicate => (Modifiers::COMMAND, Key::D),
+            Command::SelectAll => (Modifiers::COMMAND, Key::A),
+            Command::SelectChildren => (Modifiers::NONE, Key::Enter),
+            Command::SelectParent => (Modifiers::SHIFT, Key::Enter),
+            Command::Group => (Modifiers::COMMAND, Key::G),
+            Command::Ungroup => (both, Key::G),
+            Command::FrameSelection => (Modifiers::COMMAND | Modifiers::ALT, Key::G),
+            Command::BringToFront => (Modifiers::NONE, Key::CloseBracket),
+            Command::BringForward => (Modifiers::COMMAND, Key::CloseBracket),
+            Command::SendBackward => (Modifiers::COMMAND, Key::OpenBracket),
+            Command::SendToBack => (Modifiers::NONE, Key::OpenBracket),
             Command::Cancel => (Modifiers::NONE, Key::Escape),
             // With Shift held these still match, and nudge by 10.
             Command::NudgeLeft => (Modifiers::NONE, Key::ArrowLeft),
@@ -123,6 +207,11 @@ impl Command {
             Command::FrameTool => (Modifiers::NONE, Key::F),
             Command::RectangleTool => (Modifiers::NONE, Key::R),
             Command::EllipseTool => (Modifiers::NONE, Key::O),
+            Command::LineTool => (Modifiers::NONE, Key::L),
+            Command::ArrowTool => (Modifiers::SHIFT, Key::L),
+            Command::EyedropperTool => (Modifiers::NONE, Key::I),
+            // Figma gives these no key.
+            Command::PolygonTool | Command::StarTool | Command::OpenRecent => return None,
             Command::ZoomIn => (Modifiers::COMMAND, Key::Equals),
             Command::ZoomOut => (Modifiers::COMMAND, Key::Minus),
             Command::ZoomTo100 => (Modifiers::SHIFT, Key::Num0),
@@ -130,7 +219,9 @@ impl Command {
             Command::ZoomToSelection => (Modifiers::SHIFT, Key::Num2),
             Command::ToggleRulers => (Modifiers::SHIFT, Key::R),
             Command::TogglePixelGrid => (Modifiers::SHIFT, Key::Quote),
+            Command::ToggleSnap => (both, Key::Quote),
             Command::ToggleUi => (Modifiers::COMMAND, Key::Backslash),
+            Command::Palette => (Modifiers::COMMAND, Key::K),
             Command::ToggleVisible => (both, Key::H),
             Command::ToggleLocked => (both, Key::L),
         };
@@ -138,7 +229,8 @@ impl Command {
     }
 
     /// Commands whose shortcut was pressed this frame, consuming the keys.
-    pub fn pressed(ctx: &egui::Context) -> Vec<Command> {
+    /// `v_down` is whether V was down after the last call: the caller keeps it.
+    pub fn pressed(ctx: &egui::Context, v_down: &mut bool) -> Vec<Command> {
         // egui lets a shortcut match with more modifiers held than it names,
         // so R would take Shift+R: try the ones with the most modifiers first.
         let weight = |command: &Command| {
@@ -148,11 +240,35 @@ impl Command {
         let mut commands = Self::ALL;
         commands.sort_by_key(|command| std::cmp::Reverse(weight(command)));
         ctx.input_mut(|i| {
-            let mut pressed: Vec<Command> = commands.into_iter().filter(|c| c.shortcut().is_some_and(|s| i.consume_shortcut(&s))).collect();
+            // The window turns Ctrl+C and Ctrl+X into Copy and Cut events
+            // instead of key presses, and Ctrl+V into a Paste event only if
+            // the clipboard holds text. But the V is still released: a V
+            // released that was never pressed was Ctrl+V.
+            let mut pressed = Vec::new();
+            for event in &i.events {
+                match event {
+                    egui::Event::Copy => pressed.push(Command::Copy),
+                    egui::Event::Cut => pressed.push(Command::Cut),
+                    egui::Event::Key { key: Key::V, pressed: down, .. } => {
+                        if !*down && !*v_down {
+                            pressed.push(Command::Paste);
+                        }
+                        *v_down = *down;
+                    }
+                    _ => {}
+                }
+            }
+            pressed.extend(commands.into_iter().filter(|c| c.shortcut().is_some_and(|s| i.consume_shortcut(&s))));
             // Backspace deletes too, as on a laptop with no Delete key.
             if i.consume_key(Modifiers::NONE, Key::Backspace) {
                 pressed.push(Command::Delete);
             }
+            // The palette is Ctrl+/ as well, as in Figma, and a colon, as
+            // a command line is in Vim.
+            if i.consume_key(Modifiers::COMMAND, Key::Slash) || i.consume_key(Modifiers::NONE, Key::Colon) {
+                pressed.push(Command::Palette);
+            }
+            i.events.retain(|event| !matches!(event, egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_)));
             pressed
         })
     }
@@ -169,7 +285,7 @@ mod tests {
             let event = egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers };
             let mut pressed = Vec::new();
             let mut output = ctx.run_ui(egui::RawInput { events: vec![egui::Event::ModifiersChanged(modifiers), event], ..Default::default() }, |ui| {
-                pressed = Command::pressed(ui.ctx());
+                pressed = Command::pressed(ui.ctx(), &mut false);
             });
             // There's no renderer to upload textures to.
             output.textures_delta.clear();
@@ -182,8 +298,38 @@ mod tests {
         assert_eq!(pressed(Key::S, Modifiers::COMMAND | Modifiers::SHIFT), [Command::SaveAs]);
         assert_eq!(pressed(Key::Z, Modifiers::COMMAND | Modifiers::SHIFT), [Command::Redo]);
         assert_eq!(pressed(Key::Backspace, Modifiers::NONE), [Command::Delete]);
+        assert_eq!(pressed(Key::G, Modifiers::COMMAND | Modifiers::ALT), [Command::FrameSelection]);
+        assert_eq!(pressed(Key::G, Modifiers::COMMAND | Modifiers::SHIFT), [Command::Ungroup]);
+        assert_eq!(pressed(Key::CloseBracket, Modifiers::COMMAND), [Command::BringForward]);
+        assert_eq!(pressed(Key::CloseBracket, Modifiers::NONE), [Command::BringToFront]);
+        assert_eq!(pressed(Key::Enter, Modifiers::SHIFT), [Command::SelectParent]);
+        assert_eq!(pressed(Key::K, Modifiers::COMMAND), [Command::Palette]);
+        assert_eq!(pressed(Key::Slash, Modifiers::COMMAND), [Command::Palette]);
+        assert_eq!(pressed(Key::Colon, Modifiers::SHIFT), [Command::Palette]);
         // Ctrl+R is nobody's.
         assert_eq!(pressed(Key::R, Modifiers::COMMAND), []);
+    }
+
+    #[test]
+    fn copy_cut_and_paste_come_as_the_window_sends_them() {
+        let run = |events: Vec<egui::Event>, v_down: &mut bool| {
+            let ctx = egui::Context::default();
+            let mut pressed = Vec::new();
+            let mut output = ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| pressed = Command::pressed(ui.ctx(), v_down));
+            output.textures_delta.clear();
+            pressed
+        };
+        let v = |pressed, modifiers| egui::Event::Key { key: Key::V, physical_key: None, pressed, repeat: false, modifiers };
+        assert_eq!(run(vec![egui::Event::Copy], &mut false), [Command::Copy]);
+        assert_eq!(run(vec![egui::Event::Cut], &mut false), [Command::Cut]);
+        // Ctrl+V: the press is swallowed, and only the release arrives.
+        assert_eq!(run(vec![v(false, Modifiers::COMMAND)], &mut false), [Command::Paste]);
+        assert_eq!(run(vec![egui::Event::Paste("text".into()), v(false, Modifiers::COMMAND)], &mut false), [Command::Paste]);
+        // A bare V is the Move tool, and its release pastes nothing.
+        let mut v_down = false;
+        assert_eq!(run(vec![v(true, Modifiers::NONE)], &mut v_down), [Command::MoveTool]);
+        assert!(v_down);
+        assert_eq!(run(vec![v(false, Modifiers::NONE)], &mut v_down), []);
     }
 
     #[test]

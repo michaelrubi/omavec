@@ -133,6 +133,12 @@ impl History {
         self.saved = self.revision;
     }
 
+    /// Notes that the document is not what's on disk, whatever is undone:
+    /// one brought back from a recovery copy, say.
+    pub fn mark_unsaved(&mut self) {
+        self.saved = u64::MAX;
+    }
+
     /// Whether the document has changes that aren't on disk. A new document
     /// has none until it's edited, and undoing back to the saved state makes
     /// it clean again.

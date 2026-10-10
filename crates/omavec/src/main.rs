@@ -4,6 +4,7 @@
 mod app;
 mod canvas;
 mod cli;
+mod clipboard;
 mod commands;
 mod layers_panel;
 mod properties;

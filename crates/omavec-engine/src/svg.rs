@@ -2,7 +2,7 @@
 
 use std::fmt::Write;
 
-use omavec_geom::kurbo::{Affine, BezPath, PathEl};
+use omavec_geom::kurbo::{Affine, BezPath, PathEl, Point};
 use omavec_geom::stroke::{Align, outline};
 
 use crate::display::shape;
@@ -196,16 +196,14 @@ fn write_inside(node: &Node, indent: usize, out: &mut String) {
     }
 }
 
-/// `id` and everything in it as an SVG document, sized to the node.
+/// `id` and everything in it as an SVG document, sized to the node's box.
 pub fn write(document: &Document, id: NodeId) -> Result<String, Error> {
     let node = document.node(id).ok_or(Error::NoSuchNode(id))?;
-    let mut out = format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" viewBox=\"0 0 {} {}\">\n",
-        num(node.size.width),
-        num(node.size.height),
-        num(node.size.width),
-        num(node.size.height)
-    );
+    // A group's box needn't start at its origin.
+    let area = node.bounds();
+    let corner = if area.origin() == Point::ZERO { "0 0".into() } else { format!("{} {}", num(area.x0), num(area.y0)) };
+    let (width, height) = (num(area.width()), num(area.height()));
+    let mut out = format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"{corner} {width} {height}\">\n");
     if node.visible {
         write_inside(node, 2, &mut out);
     }

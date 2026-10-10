@@ -3,10 +3,11 @@ use std::sync::mpsc::{Receiver, channel};
 
 use egui::{Button, RichText, Ui};
 use omavec_engine::display::DisplayList;
-use omavec_engine::{Document, History, NodeId, file};
+use omavec_engine::{Document, Error, History, NodeId, NodeKind, Stack, file};
 use omavec_geom::kurbo::{Point, Rect, Vec2};
 
 use crate::canvas::{Canvas, Pointer};
+use crate::clipboard::Clipboard;
 use crate::commands::Command;
 use crate::layers_panel::{self, LayersPanel};
 use crate::properties::Properties;
@@ -53,6 +54,9 @@ pub struct App {
     after_save: Option<Command>,
     /// The window may close: its changes are saved or given up.
     closing: bool,
+    clipboard: Clipboard,
+    /// Whether V is held, by which Ctrl+V is told from V (see `Command::pressed`).
+    v_down: bool,
 }
 
 /// The answers to "save your changes first?".
@@ -75,6 +79,7 @@ impl App {
         let mut app = Self::with_theme(Theme::load(), blobs);
         ctx.set_visuals(app.theme.visuals());
         app.theme_rx = Some(theme::watch(ctx.clone()));
+        app.clipboard.system = true;
         if let Some(path) = open {
             app.open(&path);
         }
@@ -92,7 +97,7 @@ impl App {
         canvas.readout = blobs.is_some();
         let document = Document::default();
         let page = document.pages[0].id;
-        Self { theme, theme_rx: None, show_ui: true, canvas, history: History::new(document), tools: Tools::default(), layers: LayersPanel::default(), properties: Properties::default(), page, drawn: None, spike: blobs.is_some(), path: None, dialog: None, status: None, title: String::new(), confirm: None, after_save: None, closing: false }
+        Self { theme, theme_rx: None, show_ui: true, canvas, history: History::new(document), tools: Tools::default(), layers: LayersPanel::default(), properties: Properties::default(), page, drawn: None, spike: blobs.is_some(), path: None, dialog: None, status: None, title: String::new(), confirm: None, after_save: None, closing: false, clipboard: Clipboard::default(), v_down: false }
     }
 
     fn say(&mut self, message: impl Into<String>, wrong: bool) {
@@ -104,9 +109,22 @@ impl App {
     }
 
     /// Whatever the tools and the engine refuse is said, not fatal.
-    fn check<T>(&mut self, result: Result<T, omavec_engine::Error>) {
+    fn check<T>(&mut self, result: Result<T, Error>) {
         if let Err(error) = result {
             self.say(error.to_string(), true);
+        }
+    }
+
+    /// Changes the selected nodes as one undo step called `name`, and selects
+    /// what the change returns. With nothing selected there's nothing to do.
+    fn arrange(&mut self, name: &str, change: impl FnOnce(&mut Document, &[NodeId]) -> Result<Vec<NodeId>, Error>) {
+        if self.tools.selection.is_empty() {
+            return;
+        }
+        let selection = &self.tools.selection;
+        match self.history.edit(name, |document| change(document, selection)) {
+            Ok(selected) => self.tools.selection = selected,
+            Err(error) => self.say(error.to_string(), true),
         }
     }
 
@@ -227,6 +245,71 @@ impl App {
                 let deleted = self.tools.delete(&mut self.history);
                 self.check(deleted);
             }
+            Command::Copy | Command::Cut => {
+                if self.clipboard.copy(self.history.document(), &self.tools.selection) && command == Command::Cut {
+                    self.run(Command::Delete, ctx);
+                }
+            }
+            Command::Paste => {
+                let nodes = self.clipboard.nodes().to_vec();
+                let document = self.history.document();
+                // Into the frame or group that is selected, or beside whatever
+                // else is, or onto the page.
+                let parent = match self.tools.selection[..] {
+                    [one] if document.node(one).is_some_and(|node| node.kind.is_container()) => one,
+                    [first, ..] => document.parent(first).unwrap_or(self.page),
+                    [] => self.page,
+                };
+                if !nodes.is_empty() {
+                    match self.history.edit("Paste", |document| document.paste(parent, &nodes)) {
+                        Ok(pasted) => self.tools.selection = pasted,
+                        Err(error) => self.say(error.to_string(), true),
+                    }
+                }
+            }
+            Command::Duplicate => self.arrange("Duplicate", |document, selection| document.duplicate(selection)),
+            Command::Group => self.arrange("Group", |document, selection| Ok(vec![document.group(selection, NodeKind::Group)?])),
+            Command::FrameSelection => self.arrange("Frame Selection", |document, selection| Ok(vec![document.group(selection, NodeKind::Frame { clip: false })?])),
+            Command::Ungroup => self.arrange("Ungroup", |document, selection| {
+                // What isn't a group or a frame stays as it is, and selected.
+                let mut freed = Vec::new();
+                for id in document.roots(selection) {
+                    match document.ungroup(id) {
+                        Ok(inside) => freed.extend(inside),
+                        Err(_) => freed.push(id),
+                    }
+                }
+                Ok(freed)
+            }),
+            Command::BringToFront | Command::BringForward | Command::SendBackward | Command::SendToBack => {
+                let to = match command {
+                    Command::BringToFront => Stack::Front,
+                    Command::BringForward => Stack::Forward,
+                    Command::SendBackward => Stack::Backward,
+                    _ => Stack::Back,
+                };
+                self.arrange(command.label(), |document, selection| document.restack(selection, to).map(|()| selection.to_vec()));
+            }
+            Command::SelectAll | Command::SelectChildren | Command::SelectParent => {
+                let document = self.history.document();
+                let selection = &self.tools.selection;
+                // What can be clicked can be selected.
+                let inside = |id: NodeId| document.node(id).into_iter().flat_map(|node| &node.children).filter(|child| child.visible && !child.locked).map(|child| child.id).collect::<Vec<_>>();
+                let found: Vec<NodeId> = match command {
+                    // Everything beside what is selected, or on the page.
+                    Command::SelectAll => inside(selection.first().and_then(|first| document.parent(*first)).unwrap_or(self.page)),
+                    Command::SelectChildren => selection.iter().flat_map(|id| inside(*id)).collect(),
+                    _ => {
+                        let mut parents: Vec<NodeId> = selection.iter().filter_map(|id| document.parent(*id)).filter(|parent| *parent != self.page).collect();
+                        parents.dedup();
+                        parents
+                    }
+                };
+                // Nothing further in, or further out: stay.
+                if !found.is_empty() {
+                    self.tools.selection = found;
+                }
+            }
             Command::ToggleVisible => {
                 let toggled = layers_panel::toggle_visible(&mut self.history, &self.tools.selection);
                 self.check(toggled);
@@ -286,9 +369,10 @@ impl App {
     }
 
     fn menu_bar(&mut self, ui: &mut Ui) {
-        const MENUS: [(&str, &[Command]); 3] = [
+        const MENUS: [(&str, &[Command]); 4] = [
             ("File", &[Command::New, Command::Open, Command::Save, Command::SaveAs, Command::Quit]),
-            ("Edit", &[Command::Undo, Command::Redo, Command::Delete, Command::ToggleVisible, Command::ToggleLocked]),
+            ("Edit", &[Command::Undo, Command::Redo, Command::Cut, Command::Copy, Command::Paste, Command::Duplicate, Command::Delete, Command::SelectAll, Command::SelectChildren, Command::SelectParent]),
+            ("Object", &[Command::Group, Command::Ungroup, Command::FrameSelection, Command::BringToFront, Command::BringForward, Command::SendBackward, Command::SendToBack, Command::ToggleVisible, Command::ToggleLocked]),
             ("View", &[Command::ZoomIn, Command::ZoomOut, Command::ZoomTo100, Command::ZoomToFit, Command::ZoomToSelection, Command::ToggleRulers, Command::TogglePixelGrid, Command::ToggleUi]),
         ];
         egui::MenuBar::new().ui(ui, |ui| {
@@ -348,7 +432,7 @@ impl App {
         // While a text field has focus, keys edit the text; while a question
         // is up, it is answered first.
         if !ctx.egui_wants_keyboard_input() && self.confirm.is_none() {
-            for command in Command::pressed(ctx) {
+            for command in Command::pressed(ctx, &mut self.v_down) {
                 self.run(command, ctx);
             }
         }
@@ -358,8 +442,7 @@ impl App {
     fn corners(&self, nodes: &[NodeId]) -> Vec<[Point; 4]> {
         let document = self.history.document();
         let corners = |id: &NodeId| {
-            let (to_page, size) = (document.to_page(*id)?, document.node(*id)?.size);
-            let outline = Rect::from_origin_size((0.0, 0.0), size);
+            let (to_page, outline) = (document.to_page(*id)?, document.node(*id)?.bounds());
             Some([(outline.x0, outline.y0), (outline.x1, outline.y0), (outline.x1, outline.y1), (outline.x0, outline.y1)].map(|corner| to_page * Point::from(corner)))
         };
         nodes.iter().filter_map(corners).collect()
@@ -617,6 +700,67 @@ mod tests {
         frame(&ctx, &mut app, key(Key::Num2, Modifiers::SHIFT));
         assert!(app.canvas.view.zoom > fit * 2.0);
         assert!((on_screen(&app, 320.0, 230.0) - middle).hypot() < 1e-6);
+    }
+
+    #[test]
+    fn the_selection_is_grouped_copied_restacked_and_ungrouped_by_key() {
+        let (ctx, mut app, canvas) = app();
+        for (from, to) in [((10.0, 10.0), (50.0, 30.0)), ((300.0, 200.0), (340.0, 260.0))] {
+            frame(&ctx, &mut app, key(Key::R, Modifiers::NONE));
+            drag(&ctx, &mut app, canvas.min + vec2(from.0, from.1), canvas.min + vec2(to.0, to.1));
+        }
+        let kinds = |app: &App| boxes(app).into_iter().map(|(kind, _)| kind).collect::<Vec<_>>();
+        let [first, second] = app.history.document().node(app.page).unwrap().children.iter().map(|node| node.id).collect::<Vec<_>>()[..] else { panic!() };
+
+        frame(&ctx, &mut app, key(Key::A, Modifiers::COMMAND));
+        assert_eq!(app.tools.selection, [first, second]);
+        frame(&ctx, &mut app, key(Key::G, Modifiers::COMMAND));
+        assert_eq!(boxes(&app), [(NodeKind::Group, Rect::new(10.0, 10.0, 340.0, 260.0))]);
+        assert_eq!(app.history.undo_name(), Some("Group"));
+        let group = app.tools.selection[0];
+        // Enter goes into the group, and Shift+Enter back out to it.
+        frame(&ctx, &mut app, key(Key::Enter, Modifiers::NONE));
+        assert_eq!(app.tools.selection, [first, second]);
+        frame(&ctx, &mut app, key(Key::Enter, Modifiers::NONE));
+        assert_eq!(app.tools.selection, [first, second], "nothing further in");
+        frame(&ctx, &mut app, key(Key::Enter, Modifiers::SHIFT));
+        assert_eq!(app.tools.selection, [group]);
+        frame(&ctx, &mut app, key(Key::Enter, Modifiers::SHIFT));
+        assert_eq!(app.tools.selection, [group], "nothing further out");
+
+        // A duplicate goes in front and is what is selected; [ sends it back.
+        frame(&ctx, &mut app, key(Key::D, Modifiers::COMMAND));
+        let copy = app.tools.selection[0];
+        let order = |app: &App| app.history.document().node(app.page).unwrap().children.iter().map(|node| node.id).collect::<Vec<_>>();
+        assert_eq!(order(&app), [group, copy]);
+        frame(&ctx, &mut app, key(Key::OpenBracket, Modifiers::NONE));
+        assert_eq!(order(&app), [copy, group]);
+        assert_eq!(app.history.undo_name(), Some("Send to Back"));
+
+        frame(&ctx, &mut app, key(Key::G, Modifiers::COMMAND | Modifiers::SHIFT));
+        assert_eq!(kinds(&app), [NodeKind::Rectangle, NodeKind::Rectangle, NodeKind::Group]);
+        assert_eq!(app.tools.selection.len(), 2);
+
+        // Cut takes them away; paste puts them back, on top, where they were.
+        frame(&ctx, &mut app, vec![Event::Cut]);
+        assert_eq!(kinds(&app), [NodeKind::Group]);
+        let v_up = Event::Key { key: Key::V, physical_key: None, pressed: false, repeat: false, modifiers: Modifiers::COMMAND };
+        frame(&ctx, &mut app, vec![v_up.clone()]);
+        assert_eq!(boxes(&app)[1..], [(NodeKind::Rectangle, Rect::new(10.0, 10.0, 50.0, 30.0)), (NodeKind::Rectangle, Rect::new(300.0, 200.0, 340.0, 260.0))]);
+        assert_eq!(app.history.undo_name(), Some("Paste"));
+        // With a group selected, the paste goes into it.
+        frame(&ctx, &mut app, vec![Event::Copy]);
+        app.tools.selection = vec![group];
+        frame(&ctx, &mut app, vec![v_up.clone()]);
+        assert_eq!(app.history.document().node(group).unwrap().children.len(), 4);
+
+        // With nothing selected none of them does anything.
+        app.tools.selection.clear();
+        let before = app.history.revision();
+        for (letter, modifiers) in [(Key::G, Modifiers::COMMAND), (Key::D, Modifiers::COMMAND), (Key::CloseBracket, Modifiers::NONE), (Key::G, Modifiers::COMMAND | Modifiers::ALT)] {
+            frame(&ctx, &mut app, key(letter, modifiers));
+        }
+        assert_eq!((app.history.revision(), &app.status), (before, &None));
     }
 
     #[test]

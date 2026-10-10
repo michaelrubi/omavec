@@ -25,6 +25,8 @@ pub enum Error {
     IntoItself(NodeId),
     #[error("a page can only sit at the top of the document")]
     PageInsideNode,
+    #[error("nothing is selected")]
+    Nothing,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -112,6 +114,15 @@ impl Node {
             && children.iter().zip(&b.children).all(|(a, b)| Node::same(a, b))
     }
 
+    /// The node's box in its own coordinates. A group has none of its own:
+    /// its box is whatever holds its children.
+    pub fn bounds(&self) -> Rect {
+        match self.kind {
+            NodeKind::Page | NodeKind::Group => self.children.iter().map(|child| child.transform.transform_rect_bbox(child.bounds())).reduce(|a, b| a.union(b)).unwrap_or_default(),
+            _ => Rect::from_origin_size((0.0, 0.0), self.size),
+        }
+    }
+
     /// Whether `point`, in this node's own coordinates, is on its shape.
     /// Pages and groups have no shape of their own.
     fn covers(&self, point: Point) -> bool {
@@ -183,6 +194,15 @@ impl Document {
         let id = NodeId(self.next_id);
         self.next_id += 1;
         Node { id, name: kind.label().into(), visible: true, locked: false, opacity: 1.0, transform: Affine::IDENTITY, size, fills: kind.fills(), stroke: Stroke::default(), kind, children: Vec::new() }
+    }
+
+    /// A copy of `node` and everything in it, with ids of their own.
+    pub fn copy_of(&mut self, node: &Node) -> Node {
+        let mut copy = node.clone();
+        copy.id = NodeId(self.next_id);
+        self.next_id += 1;
+        copy.children = node.children.iter().map(|child| Arc::new(self.copy_of(child))).collect();
+        copy
     }
 
     pub fn add_page(&mut self, name: &str) -> NodeId {
@@ -257,7 +277,7 @@ impl Document {
         Some(transform)
     }
 
-    fn container(&self, id: NodeId) -> Result<&Node, Error> {
+    pub(crate) fn container(&self, id: NodeId) -> Result<&Node, Error> {
         let node = self.node(id).ok_or(Error::NoSuchNode(id))?;
         if node.kind.is_container() { Ok(node) } else { Err(Error::NotAContainer(id)) }
     }

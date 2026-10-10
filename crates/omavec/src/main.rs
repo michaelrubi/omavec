@@ -6,6 +6,7 @@ mod canvas;
 mod cli;
 mod clipboard;
 mod commands;
+mod export;
 mod layers_panel;
 mod properties;
 mod rulers;

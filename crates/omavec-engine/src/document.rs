@@ -8,6 +8,7 @@ use omavec_geom::kurbo::{Affine, BezPath, Point, Rect, Shape, Size};
 use omavec_geom::shapes;
 use serde::{Deserialize, Serialize};
 
+use crate::export::Export;
 use crate::paint::{Color, Paint, Stroke, is_no, is_one, is_yes, one, yes};
 
 /// A node's identity, kept across saves so diffs stay small and instance
@@ -120,6 +121,9 @@ pub struct Node {
     pub fills: Vec<Paint>,
     #[serde(default, skip_serializing_if = "Stroke::is_none")]
     pub stroke: Stroke,
+    /// What the node is exported as.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exports: Vec<Export>,
     /// Back to front: the last child is drawn on top.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Arc<Node>>,
@@ -141,8 +145,8 @@ impl Node {
             return true;
         }
         // Spelled out so that a new field can't be forgotten here.
-        let Node { id, kind, name, visible, locked, opacity, transform, size, radii, fills, stroke, children } = &**a;
-        (id, kind, name, visible, locked, opacity, transform, size, radii, fills, stroke) == (&b.id, &b.kind, &b.name, &b.visible, &b.locked, &b.opacity, &b.transform, &b.size, &b.radii, &b.fills, &b.stroke)
+        let Node { id, kind, name, visible, locked, opacity, transform, size, radii, fills, stroke, exports, children } = &**a;
+        (id, kind, name, visible, locked, opacity, transform, size, radii, fills, stroke, exports) == (&b.id, &b.kind, &b.name, &b.visible, &b.locked, &b.opacity, &b.transform, &b.size, &b.radii, &b.fills, &b.stroke, &b.exports)
             && children.len() == b.children.len()
             && children.iter().zip(&b.children).all(|(a, b)| Node::same(a, b))
     }
@@ -252,7 +256,7 @@ impl Document {
     pub fn create(&mut self, kind: NodeKind, size: Size) -> Node {
         let id = NodeId(self.next_id);
         self.next_id += 1;
-        Node { id, name: kind.label().into(), visible: true, locked: false, opacity: 1.0, transform: Affine::IDENTITY, size, radii: [0.0; 4], fills: kind.fills(), stroke: kind.stroke(), kind, children: Vec::new() }
+        Node { id, name: kind.label().into(), visible: true, locked: false, opacity: 1.0, transform: Affine::IDENTITY, size, radii: [0.0; 4], fills: kind.fills(), stroke: kind.stroke(), exports: Vec::new(), kind, children: Vec::new() }
     }
 
     /// A copy of `node` and everything in it, with ids of their own.

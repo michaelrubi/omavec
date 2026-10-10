@@ -284,17 +284,23 @@ reopen and export.
   the selection has no fill and doesn't clip, so nothing looks different.
   Later: pasting SVG copied in another app (Phase 2's importer), and
   between two Omavec windows.
-- Export: per-node export settings (SVG, PNG @1x/@2x/@3x); `omavec export`
+- ~~Export: per-node export settings (SVG, PNG @1x/@2x/@3x); `omavec export`
   CLI; `vello_cpu` for headless PNG. `vectorcraft-svg`'s writer is the
-  reference for the SVG side.
-  Built so far: `omavec_engine::svg::write` turns a node into SVG
-  (`<rect>`, `<ellipse>` and `<g>`, translations folded into `x`/`y`,
-  numbers to three decimals), and a test rasterises it with resvg and
-  compares it with our own rendering, pixel by pixel. `omavec export
-  file.omavec --frame Logo --format svg,png@2x --out dist/` writes
-  top-level frames with no window: every frame if none is named, PNG at 1×
-  if no format is. Left: exporting from the app, export settings kept on
-  nodes, anything that isn't a top-level frame, and layer names as ids.
+  reference for the SVG side.~~ (done) `omavec_engine::svg::write` turns a
+  node into SVG (the plainest element that says each shape, translations
+  folded into `x`/`y`, numbers to three decimals), and a test rasterises it
+  with resvg and compares it with our own rendering, pixel by pixel. A
+  node keeps a list of export settings (SVG, or PNG at a scale) in the
+  file; the Design panel edits them. Export… (Ctrl+Shift+E, or the
+  panel's button) asks for a folder and writes the selection, or with
+  nothing selected every top-level frame, each as its settings say, or as
+  a PNG if it has none. `omavec export file.omavec --frame Logo --format
+  svg,png@2x --out dist/` does the same with no window: every frame if
+  none is named, each frame's own settings if no format is.
+  Later: a stroke or shadow outside a node's box is cut off, since the
+  picture is the size of the box; a suffix for each setting; layer names
+  as ids in the SVG; `--node` in the CLI for something that isn't a
+  top-level frame.
 - `OMAVEC_SCRIPT` replay and the egui `Harness` for UI tests.
 - Command palette (Ctrl+K, Ctrl+/) listing every `Command`, and `:` to
   open it as a command line.

@@ -310,7 +310,10 @@ Variables, styles, assets and the thumbnail aren't written yet.
   transforms, shortest path data, optional `currentColor`, per-frame or
   per-selection.
 - **PNG/JPEG/WebP export** at @1x/@2x/@3x presets, per node, like Figma's
-  export settings.
+  export settings. A node's settings are a list in the file (`exports`:
+  SVG, or PNG at a scale; JPEG and WebP to come), and the app's Export
+  command and `omavec export` are one function
+  (`crates/omavec/src/export.rs`), so they can't write different files.
 - **PDF export** through `svg2pdf`, mainly for logo handoff.
 - **Code export** from a selection: CSS, Tailwind classes, SVG, and
   SVG-in-JSX/TSX; variables as CSS custom properties, a Tailwind theme, or
@@ -327,7 +330,7 @@ Variables, styles, assets and the thumbnail aren't written yet.
 ```
 omavec file.omavec                                   open in the app
 omavec export file.omavec --frame Logo --format svg,png@2x --out dist/
-omavec export file.omavec --all-export-settings      every node's export presets
+omavec export file.omavec --out dist/                every frame, as its export settings say
 omavec import design.fig --out design.omavec         .fig conversion + report
 omavec tokens file.omavec --format css|tailwind|omarchy
 ```
@@ -378,6 +381,7 @@ Figma's defaults, plus Illustrator's letters for the tools Figma lacks.
 | Ctrl+\ | Show/hide UI | Ctrl+Q | Quit |
 | Ctrl+Z / Ctrl+Shift+Z | Undo / redo | Delete, Backspace | Delete |
 | Ctrl+N / Ctrl+O | New / open | Ctrl+S / Ctrl+Shift+S | Save / save as |
+| Ctrl+Shift+E | Export |  |  |
 | Esc | Give up the drag, then the tool, then the selection | Arrows / Shift+arrows | Nudge by 1 / 10 |
 | Shift+R | Rulers | Shift+' | Pixel grid |
 

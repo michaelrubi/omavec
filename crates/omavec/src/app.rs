@@ -166,6 +166,26 @@ impl App {
         }
     }
 
+    /// What Export exports: the selection, or with nothing selected every
+    /// top-level frame on the page.
+    fn exported(&self) -> Vec<NodeId> {
+        let document = self.history.document();
+        if !self.tools.selection.is_empty() {
+            return document.roots(&self.tools.selection);
+        }
+        let frames = document.node(self.page).into_iter().flat_map(|page| &page.children).filter(|node| matches!(node.kind, NodeKind::Frame { .. }));
+        frames.map(|node| node.id).collect()
+    }
+
+    /// Writes what Export exports into `folder`, each node as its own
+    /// export settings say.
+    fn export_to(&mut self, folder: &Path) {
+        match crate::export::write(self.history.document(), &self.exported(), &[], folder) {
+            Ok(files) => self.say(format!("Exported {} file{} into {}", files.len(), if files.len() == 1 { "" } else { "s" }, folder.display()), false),
+            Err(error) => self.say(format!("Couldn't export: {error}"), true),
+        }
+    }
+
     /// Opens a file dialog off the UI thread; `answer` takes what it returns.
     fn ask(&mut self, command: Command, ctx: &egui::Context) {
         if self.dialog.is_some() {
@@ -181,6 +201,7 @@ impl App {
             }
             let picked = match command {
                 Command::Open => dialog.set_title("Open a .omavecz, or the document.json in a .omavec folder").add_filter("Omavec documents", &["omavecz", "json"]).pick_file(),
+                Command::Export => dialog.set_title("Export into").pick_folder(),
                 _ => dialog.set_title("Save As").set_file_name("Untitled.omavec").save_file(),
             };
             let _ = tx.send(picked);
@@ -196,6 +217,8 @@ impl App {
         self.dialog = None;
         match (command, picked) {
             (Command::Open, Some(folder)) => self.open(&folder),
+            (Command::Export, Some(folder)) => self.export_to(&folder),
+            (Command::Export, None) => {}
             (_, Some(mut folder)) => {
                 // A folder unless it's named as the zipped kind.
                 if folder.extension().is_none_or(|extension| extension != "omavec" && extension != "omavecz") {
@@ -239,6 +262,8 @@ impl App {
             Command::New | Command::Open | Command::Quit if self.history.is_dirty() => self.confirm = Some(command),
             Command::New | Command::Open | Command::Quit => self.proceed(command, ctx),
             Command::SaveAs => self.ask(command, ctx),
+            Command::Export if self.exported().is_empty() => self.say("Nothing to export: select something, or draw a frame", true),
+            Command::Export => self.ask(command, ctx),
             Command::Save => match self.path.clone() {
                 Some(folder) => self.save_to(&folder),
                 None => self.ask(Command::SaveAs, ctx),
@@ -374,7 +399,7 @@ impl App {
 
     fn menu_bar(&mut self, ui: &mut Ui) {
         const MENUS: [(&str, &[Command]); 4] = [
-            ("File", &[Command::New, Command::Open, Command::Save, Command::SaveAs, Command::Quit]),
+            ("File", &[Command::New, Command::Open, Command::Save, Command::SaveAs, Command::Export, Command::Quit]),
             ("Edit", &[Command::Undo, Command::Redo, Command::Cut, Command::Copy, Command::Paste, Command::Duplicate, Command::Delete, Command::SelectAll, Command::SelectChildren, Command::SelectParent]),
             ("Object", &[Command::Group, Command::Ungroup, Command::FrameSelection, Command::BringToFront, Command::BringForward, Command::SendBackward, Command::SendToBack, Command::ToggleVisible, Command::ToggleLocked]),
             ("View", &[Command::ZoomIn, Command::ZoomOut, Command::ZoomTo100, Command::ZoomToFit, Command::ZoomToSelection, Command::ToggleRulers, Command::TogglePixelGrid, Command::ToggleUi]),
@@ -488,6 +513,8 @@ impl App {
             }
             self.drawn = Some(self.history.revision());
         }
+        // A command a panel's button asked for, run once the panels are laid out.
+        let mut wanted = None;
         let bar = egui::Frame::new()
             .fill(self.theme.dark_background)
             .inner_margin(egui::Margin::symmetric(8, 4));
@@ -516,10 +543,15 @@ impl App {
                 .show(ui, |ui| {
                     ui.strong("Design");
                     ui.separator();
-                    let shown = self.properties.show(ui, &mut self.history, &self.tools.selection);
-                    self.check(shown);
+                    match self.properties.show(ui, &mut self.history, &self.tools.selection) {
+                        Ok(asked) => wanted = asked,
+                        Err(error) => self.say(error.to_string(), true),
+                    }
                     ui.take_available_space();
                 });
+        }
+        if let Some(command) = wanted {
+            self.run(command, ui.ctx());
         }
         let document = self.history.document();
         let handles = self.tools.frame(document).map(|(to_page, area)| [(area.x0, area.y0), (area.x1, area.y0), (area.x1, area.y1), (area.x0, area.y1)].map(|corner| to_page * Point::from(corner)));
@@ -601,7 +633,7 @@ impl eframe::App for App {
 mod tests {
     use super::*;
     use egui::{Event, Key, Modifiers, PointerButton, Pos2, pos2, vec2};
-    use omavec_engine::NodeKind;
+    use omavec_engine::Export;
     use omavec_geom::kurbo::Vec2;
 
     /// One headless frame of the whole window with `events`. Returns the
@@ -852,6 +884,42 @@ mod tests {
         assert_eq!(app.tools.tool, Tool::Line);
         frame(&ctx, &mut app, key(Key::L, Modifiers::SHIFT));
         assert_eq!(app.tools.tool, Tool::Arrow);
+    }
+
+    #[test]
+    fn export_writes_the_selection_or_every_frame_as_each_is_set_to() {
+        let folder = std::env::temp_dir().join(format!("omavec-export-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        let (ctx, mut app, canvas) = app();
+        // Nothing to export yet: say so, and open no dialog.
+        frame(&ctx, &mut app, key(Key::E, Modifiers::COMMAND | Modifiers::SHIFT));
+        assert!(app.dialog.is_none() && app.status.as_ref().is_some_and(|(message, wrong)| *wrong && message.starts_with("Nothing to export")));
+
+        frame(&ctx, &mut app, key(Key::F, Modifiers::NONE));
+        drag(&ctx, &mut app, canvas.min + vec2(20.0, 20.0), canvas.min + vec2(220.0, 120.0));
+        frame(&ctx, &mut app, key(Key::O, Modifiers::NONE));
+        drag(&ctx, &mut app, canvas.min + vec2(40.0, 40.0), canvas.min + vec2(100.0, 80.0));
+        let ellipse = app.tools.selection[0];
+        let names = |files: &Path| {
+            let mut names: Vec<String> = std::fs::read_dir(files).unwrap().map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned()).collect();
+            names.sort();
+            names
+        };
+        // The selection, as a PNG since it says nothing else.
+        app.export_to(&folder.join("one"));
+        assert_eq!(names(&folder.join("one")), ["Ellipse.png"]);
+        assert_eq!(app.status, Some((format!("Exported 1 file into {}", folder.join("one").display()), false)));
+        // As its own settings say, once it has some.
+        app.history.edit("Export Settings", |document| document.node_mut(ellipse).map(|node| node.exports = vec![Export::Svg, Export::Png { scale: 2.0 }])).unwrap();
+        app.export_to(&folder.join("two"));
+        assert_eq!(names(&folder.join("two")), ["Ellipse.svg", "Ellipse@2x.png"]);
+        let svg = std::fs::read_to_string(folder.join("two/Ellipse.svg")).unwrap();
+        assert!(svg.contains(r#"width="60" height="40""#) && svg.contains("<ellipse"), "{svg}");
+        // With nothing selected, every frame on the page.
+        app.tools.selection.clear();
+        app.export_to(&folder.join("all"));
+        assert_eq!(names(&folder.join("all")), ["Frame.png"]);
+        let _ = std::fs::remove_dir_all(folder);
     }
 
     #[test]

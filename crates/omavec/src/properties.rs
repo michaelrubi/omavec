@@ -2,7 +2,9 @@
 //! numbers that can be dragged or typed.
 
 use egui::{DragValue, Ui};
-use omavec_engine::{Align, Cap, Color, Error, History, Join, Node, NodeId, NodeKind, Paint, PaintKind};
+use omavec_engine::{Align, Cap, Color, Error, Export, History, Join, Node, NodeId, NodeKind, Paint, PaintKind};
+
+use crate::commands::Command;
 use omavec_geom::kurbo::Affine;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -241,6 +243,46 @@ fn paints(ui: &mut Ui, title: &str, paints: &[Paint]) -> Option<PaintEdit> {
     edit
 }
 
+/// The node's export settings, one to a row, and what the user did to them
+/// this frame: the settings as they should now be, or a click on Export.
+fn exports(ui: &mut Ui, exports: &[Export]) -> (Option<Vec<Export>>, bool) {
+    let (mut edited, mut go) = (exports.to_vec(), false);
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.strong("Export");
+        if ui.small_button("+").on_hover_text("Add one").clicked() {
+            // As Figma does: 1x, then 2x, then 3x.
+            let scale = 1.0 + exports.iter().filter(|export| matches!(export, Export::Png { .. })).count() as f64;
+            edited.push(Export::Png { scale });
+        }
+    });
+    let mut removed = None;
+    for (index, export) in edited.iter_mut().enumerate() {
+        ui.horizontal(|ui| {
+            let mut svg = *export == Export::Svg;
+            egui::ComboBox::from_id_salt(("export", index)).selected_text(if svg { "SVG" } else { "PNG" }).show_ui(ui, |ui| {
+                ui.selectable_value(&mut svg, false, "PNG");
+                ui.selectable_value(&mut svg, true, "SVG");
+            });
+            match (svg, &mut *export) {
+                (true, _) => *export = Export::Svg,
+                (false, Export::Png { scale }) => drop(ui.add(DragValue::new(scale).speed(0.05).range(0.1..=16.0).max_decimals(2).suffix("x"))),
+                (false, Export::Svg) => *export = Export::PNG,
+            }
+            if ui.small_button("−").on_hover_text("Remove it").clicked() {
+                removed = Some(index);
+            }
+        });
+    }
+    if let Some(index) = removed {
+        edited.remove(index);
+    }
+    if ui.button("Export…").clicked() {
+        go = true;
+    }
+    ((edited != exports).then_some(edited), go)
+}
+
 #[derive(Default)]
 pub struct Properties {
     /// A widget is being dragged, and its changes are one undo step so far.
@@ -270,16 +312,19 @@ impl Properties {
         }
     }
 
-    pub fn show(&mut self, ui: &mut Ui, history: &mut History, selection: &[NodeId]) -> Result<(), Error> {
+    /// Lays the panel out for the selection, and returns a command if one of
+    /// its buttons asked for one.
+    pub fn show(&mut self, ui: &mut Ui, history: &mut History, selection: &[NodeId]) -> Result<Option<Command>, Error> {
         let pointer_down = ui.input(|i| i.pointer.any_down());
         self.settle(history, pointer_down);
         let [id] = selection else {
             if selection.len() > 1 {
                 ui.weak(format!("{} selected", selection.len()));
             }
-            return Ok(());
+            return Ok(None);
         };
-        let Some(node) = history.document().node(*id) else { return Ok(()) };
+        let Some(node) = history.document().node(*id) else { return Ok(None) };
+        let exported = node.exports.clone();
         let (values, fills, stroke) = (Field::ALL.map(|field| field.get(node)), node.fills.clone(), node.stroke.clone());
         let params: Vec<(Param, f64)> = Param::of(node).into_iter().map(|param| (param, param.get(node))).collect();
         let (mut clip, mut clip_changed, line) = (if let NodeKind::Frame { clip } = node.kind { Some(clip) } else { None }, false, node.kind == NodeKind::Line);
@@ -357,7 +402,12 @@ impl Properties {
                 self.change(history, *id, "Stroke", pointer_down && edited.weight != stroke.weight, |node| node.stroke = edited)?;
             }
         }
-        Ok(())
+        let (edited, go) = exports(ui, &exported);
+        if let Some(edited) = edited {
+            // Only a scale is dragged.
+            self.change(history, *id, "Export Settings", pointer_down && edited.len() == exported.len(), |node| node.exports = edited)?;
+        }
+        Ok(go.then_some(Command::Export))
     }
 }
 

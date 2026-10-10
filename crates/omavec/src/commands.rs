@@ -9,6 +9,7 @@ pub enum Command {
     Open,
     Save,
     SaveAs,
+    Export,
     Quit,
     Undo,
     Redo,
@@ -54,11 +55,12 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Command; 46] = [
+    pub const ALL: [Command; 47] = [
         Command::New,
         Command::Open,
         Command::Save,
         Command::SaveAs,
+        Command::Export,
         Command::Quit,
         Command::Undo,
         Command::Redo,
@@ -109,6 +111,7 @@ impl Command {
             Command::Open => "Open…",
             Command::Save => "Save",
             Command::SaveAs => "Save As…",
+            Command::Export => "Export…",
             Command::Quit => "Quit",
             Command::Undo => "Undo",
             Command::Redo => "Redo",
@@ -162,6 +165,7 @@ impl Command {
             Command::Open => (Modifiers::COMMAND, Key::O),
             Command::Save => (Modifiers::COMMAND, Key::S),
             Command::SaveAs => (both, Key::S),
+            Command::Export => (both, Key::E),
             Command::Quit => (Modifiers::COMMAND, Key::Q),
             Command::Undo => (Modifiers::COMMAND, Key::Z),
             Command::Redo => (both, Key::Z),

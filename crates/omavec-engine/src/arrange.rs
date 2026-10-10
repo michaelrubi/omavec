@@ -183,6 +183,37 @@ impl Document {
         Ok(())
     }
 
+    /// Moves `ids` into `parent`, just behind its child `behind`, or to the
+    /// front with none. They keep their order, and where they are on the
+    /// page.
+    pub fn rehome(&mut self, ids: &[NodeId], parent: NodeId, behind: Option<NodeId>) -> Result<(), Error> {
+        let roots = self.roots(ids);
+        self.container(parent)?;
+        // Nothing goes into itself, or into what is inside it.
+        let mut above = Some(parent);
+        while let Some(ancestor) = above {
+            if roots.contains(&ancestor) {
+                return Err(Error::IntoItself(ancestor));
+            }
+            above = self.parent(ancestor);
+        }
+        let to_parent = self.to_page(parent).ok_or(Error::NoSuchNode(parent))?.inverse();
+        let mut moved = Vec::new();
+        for id in &roots {
+            let on_page = self.to_page(*id).ok_or(Error::NoSuchNode(*id))?;
+            let from = self.parent(*id);
+            let mut node = self.remove(*id)?;
+            if from != Some(parent) {
+                Arc::make_mut(&mut node).transform = to_parent * on_page;
+            }
+            moved.push(node);
+        }
+        let children = &mut self.node_mut(parent)?.children;
+        let at = behind.and_then(|behind| children.iter().position(|child| child.id == behind)).unwrap_or(children.len());
+        children.splice(at..at, moved);
+        Ok(())
+    }
+
     /// `ids` for the clipboard: each node as it is, but placed on its page
     /// instead of in its parent, so it can be pasted anywhere.
     pub fn copy(&self, ids: &[NodeId]) -> Vec<Arc<Node>> {

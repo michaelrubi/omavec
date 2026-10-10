@@ -283,8 +283,12 @@ reopen and export.
 - Panels: layers (tree, rename, reorder by drag, hide, lock, multi-select),
   properties (Figma's right panel layout). Built so far: the layers panel
   (select, Shift-select, rename by double-click, hide and lock per row and
-  by Ctrl+Shift+H / Ctrl+Shift+L); reordering by drag and the rest of the
-  properties panel are left.
+  by Ctrl+Shift+H / Ctrl+Shift+L, and dragging rows to another place in
+  the stack or into a frame or group, which leaves them where they are on
+  the page), and a Design panel with what is listed under Transform,
+  Tools, Paint and Export. Left: collapsing a container's rows; the Design
+  panel laid out as Figma's is (it is rows of labelled numbers so far)
+  and for more than one node at a time.
 - Smart guides and snapping: edges, centres, equal spacing, pixel grid.
   Built so far: a move lines the selection's edges and middle up with
   those of what is beside it, and of the frame it is in, when they come

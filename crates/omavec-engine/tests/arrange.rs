@@ -170,6 +170,32 @@ fn restacking_moves_past_what_is_not_moving() {
 }
 
 #[test]
+fn nodes_move_to_another_place_in_the_tree_and_stay_put_on_the_page() {
+    let Scene { mut document, page, frame, one, two, ellipse } = scene();
+    let before = places(&document);
+    // Into the turned frame, behind its front-most child.
+    document.rehome(&[ellipse], frame, Some(two)).unwrap();
+    assert_eq!(children(&document, frame), [one, ellipse, two]);
+    // Out of it, to the front of the page; and two at once, in their order.
+    document.rehome(&[two, one], page, None).unwrap();
+    assert_eq!((children(&document, page), children(&document, frame)), (vec![frame, one, two], vec![ellipse]));
+    // Within one parent: just behind the one named.
+    document.rehome(&[two], page, Some(frame)).unwrap();
+    assert_eq!(children(&document, page), [two, frame, one]);
+    assert_same_places(&before, &places(&document));
+    // Behind something that is moving with it there is no place: the front.
+    document.rehome(&[two], page, Some(two)).unwrap();
+    assert_eq!(children(&document, page), [frame, one, two]);
+    // Not into itself, into what is in it, or into what can't hold anything.
+    let inner = document.group(&[ellipse], NodeKind::Group).unwrap();
+    let unchanged = document.clone();
+    assert_eq!(document.rehome(&[frame], inner, None), Err(Error::IntoItself(frame)));
+    assert_eq!(document.rehome(&[frame], frame, None), Err(Error::IntoItself(frame)));
+    assert_eq!(document.rehome(&[frame], one, None), Err(Error::NotAContainer(one)));
+    assert_eq!(document, unchanged);
+}
+
+#[test]
 fn a_copy_pastes_where_it_was_on_the_page_whatever_it_goes_into() {
     let Scene { mut document, page, frame, one, ellipse, .. } = scene();
     let was = document.to_page(one).unwrap();

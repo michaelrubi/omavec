@@ -3,6 +3,7 @@
 //! export alike.
 
 use omavec_geom::kurbo::{Affine, BezPath, Ellipse, Rect, Shape};
+use omavec_geom::stroke::outline;
 
 use crate::document::{Node, NodeKind};
 use crate::paint::PaintKind;
@@ -10,6 +11,17 @@ use crate::paint::PaintKind;
 /// How far an ellipse's path may stray from the true curve, in document
 /// units: a quarter of a pixel at the deepest zoom.
 const TOLERANCE: f64 = 1e-3;
+
+/// A node's own shape as a path, in its own coordinates. Pages and groups
+/// have none.
+pub(crate) fn shape(node: &Node) -> Option<BezPath> {
+    let bounds = Rect::from_origin_size((0.0, 0.0), node.size);
+    match node.kind {
+        NodeKind::Page | NodeKind::Group => None,
+        NodeKind::Frame { .. } | NodeKind::Rectangle => Some(bounds.to_path(TOLERANCE)),
+        NodeKind::Ellipse => Some(Ellipse::from_rect(bounds).to_path(TOLERANCE)),
+    }
+}
 
 /// One filled path, in document units.
 pub struct Item {
@@ -50,23 +62,28 @@ impl DisplayList {
         // Later: a node's opacity belongs to the node as a whole, so where
         // its children overlap this shows through and a layer wouldn't.
         let opacity = opacity * node.opacity;
-        let outline = Rect::from_origin_size((0.0, 0.0), node.size);
-        let path = match node.kind {
-            NodeKind::Page | NodeKind::Group => None,
-            NodeKind::Frame { .. } | NodeKind::Rectangle => Some(outline.to_path(TOLERANCE)),
-            NodeKind::Ellipse => Some(Ellipse::from_rect(outline).to_path(TOLERANCE)),
-        };
-        if let Some(path) = path {
-            let path = transform * path;
-            for paint in node.fills.iter().filter(|paint| paint.visible) {
+        let path = shape(node);
+        let paint = |list: &mut Self, path: &BezPath, paints: &[crate::paint::Paint]| {
+            let path = transform * path.clone();
+            // A stroke with no weight has no area to paint.
+            for paint in paints.iter().filter(|paint| paint.visible && !path.elements().is_empty()) {
                 let PaintKind::Solid { color } = paint.kind;
                 let alpha = (opacity * paint.opacity).clamp(0.0, 1.0) as f32;
-                self.items.push(Item::new(path.clone(), peniko::Color::from_rgb8(color.r, color.g, color.b).with_alpha(alpha)));
+                list.items.push(Item::new(path.clone(), peniko::Color::from_rgb8(color.r, color.g, color.b).with_alpha(alpha)));
             }
+        };
+        if let Some(path) = &path {
+            paint(self, path, &node.fills);
         }
         // Later: a frame with `clip` on hides what its children draw outside it.
         for child in &node.children {
             self.add(child, transform, opacity);
+        }
+        // The stroke goes over the fill, and a frame's over what is in it.
+        if let Some(path) = &path
+            && node.stroke.paints.iter().any(|paint| paint.visible)
+        {
+            paint(self, &outline(path, node.stroke.weight, node.stroke.align), &node.stroke.paints);
         }
     }
 }

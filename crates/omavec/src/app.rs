@@ -3,16 +3,24 @@ use std::sync::mpsc::{Receiver, channel};
 
 use egui::{Button, RichText, Ui};
 use omavec_engine::display::DisplayList;
-use omavec_engine::{Document, History, Node, NodeId, file};
-use omavec_geom::kurbo::{Point, Rect};
+use omavec_engine::{Document, History, NodeId, file};
+use omavec_geom::kurbo::{Point, Rect, Vec2};
 
 use crate::canvas::{Canvas, Pointer};
 use crate::commands::Command;
+use crate::layers_panel::{self, LayersPanel};
+use crate::properties::Properties;
 use crate::theme::{self, Theme};
 use crate::tools::{Keys, Tool, Tools};
 
 /// The tools in the tool bar, with the command that picks each.
-const TOOLS: [(Tool, Command); 4] = [(Tool::Move, Command::MoveTool), (Tool::Frame, Command::FrameTool), (Tool::Rectangle, Command::RectangleTool), (Tool::Ellipse, Command::EllipseTool)];
+const TOOLS: [(Tool, Command); 5] = [
+    (Tool::Move, Command::MoveTool),
+    (Tool::Hand, Command::HandTool),
+    (Tool::Frame, Command::FrameTool),
+    (Tool::Rectangle, Command::RectangleTool),
+    (Tool::Ellipse, Command::EllipseTool),
+];
 
 pub struct App {
     theme: Theme,
@@ -23,6 +31,8 @@ pub struct App {
     canvas: Canvas,
     history: History,
     tools: Tools,
+    layers: LayersPanel,
+    properties: Properties,
     /// The page on the canvas.
     page: NodeId,
     /// The revision of the document the canvas is drawing.
@@ -37,6 +47,20 @@ pub struct App {
     status: Option<(String, bool)>,
     /// The window title as last set.
     title: String,
+    /// A command that would throw away unsaved changes, waiting for an answer.
+    confirm: Option<Command>,
+    /// What to carry on with once a save asked for by that answer is done.
+    after_save: Option<Command>,
+    /// The window may close: its changes are saved or given up.
+    closing: bool,
+}
+
+/// The answers to "save your changes first?".
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Choice {
+    Save,
+    Discard,
+    Cancel,
 }
 
 impl App {
@@ -68,7 +92,7 @@ impl App {
         canvas.readout = blobs.is_some();
         let document = Document::default();
         let page = document.pages[0].id;
-        Self { theme, theme_rx: None, show_ui: true, canvas, history: History::new(document), tools: Tools::default(), page, drawn: None, spike: blobs.is_some(), path: None, dialog: None, status: None, title: String::new() }
+        Self { theme, theme_rx: None, show_ui: true, canvas, history: History::new(document), tools: Tools::default(), layers: LayersPanel::default(), properties: Properties::default(), page, drawn: None, spike: blobs.is_some(), path: None, dialog: None, status: None, title: String::new(), confirm: None, after_save: None, closing: false }
     }
 
     fn say(&mut self, message: impl Into<String>, wrong: bool) {
@@ -92,7 +116,10 @@ impl App {
         (self.history, self.tools, self.page, self.path, self.drawn) = (History::new(document), Tools::default(), page, path, None);
     }
 
-    fn open(&mut self, folder: &Path) {
+    fn open(&mut self, path: &Path) {
+        // The file dialog can't pick a folder and a file both, so a folder
+        // is opened by the `document.json` in it.
+        let folder = if path.file_name().is_some_and(|name| name == "document.json") { path.parent().unwrap_or(path) } else { path };
         match file::open(folder) {
             Ok(document) => {
                 self.set_document(document, Some(folder.into()));
@@ -109,7 +136,11 @@ impl App {
                 self.path = Some(folder.into());
                 self.say(format!("Saved {}", name_of(folder)), false);
             }
-            Err(error) => self.say(format!("Couldn't save: {error}"), true),
+            Err(error) => {
+                // Whatever was waiting on this save doesn't happen.
+                self.after_save = None;
+                self.say(format!("Couldn't save: {error}"), true);
+            }
         }
     }
 
@@ -127,7 +158,7 @@ impl App {
                 dialog = dialog.set_directory(start);
             }
             let picked = match command {
-                Command::Open => dialog.set_title("Open an .omavec folder").pick_folder(),
+                Command::Open => dialog.set_title("Open a .omavecz, or the document.json in a .omavec folder").add_filter("Omavec documents", &["omavecz", "json"]).pick_file(),
                 _ => dialog.set_title("Save As").set_file_name("Untitled.omavec").save_file(),
             };
             let _ = tx.send(picked);
@@ -144,32 +175,80 @@ impl App {
         match (command, picked) {
             (Command::Open, Some(folder)) => self.open(&folder),
             (_, Some(mut folder)) => {
-                if folder.extension().is_none_or(|extension| extension != "omavec") {
+                // A folder unless it's named as the zipped kind.
+                if folder.extension().is_none_or(|extension| extension != "omavec" && extension != "omavecz") {
                     folder.as_mut_os_string().push(".omavec");
                 }
                 self.save_to(&folder);
             }
-            (_, None) => {}
+            (_, None) => self.after_save = None,
+        }
+    }
+
+    /// Does what New, Open and Quit do, with nothing left to lose.
+    fn proceed(&mut self, command: Command, ctx: &egui::Context) {
+        match command {
+            Command::New => self.set_document(Document::default(), None),
+            Command::Open => self.ask(command, ctx),
+            _ => {
+                self.closing = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
+    }
+
+    /// The answer to the question `confirm` put.
+    fn decide(&mut self, choice: Choice, ctx: &egui::Context) {
+        let Some(command) = self.confirm.take() else { return };
+        match choice {
+            Choice::Save => {
+                self.after_save = Some(command);
+                self.run(Command::Save, ctx);
+            }
+            Choice::Discard => self.proceed(command, ctx),
+            Choice::Cancel => {}
         }
     }
 
     fn run(&mut self, command: Command, ctx: &egui::Context) {
         match command {
-            Command::New => self.set_document(Document::default(), None),
-            Command::Open | Command::SaveAs => self.ask(command, ctx),
+            // These replace the document or close it: ask first if it has
+            // changes that aren't saved.
+            Command::New | Command::Open | Command::Quit if self.history.is_dirty() => self.confirm = Some(command),
+            Command::New | Command::Open | Command::Quit => self.proceed(command, ctx),
+            Command::SaveAs => self.ask(command, ctx),
             Command::Save => match self.path.clone() {
                 Some(folder) => self.save_to(&folder),
                 None => self.ask(Command::SaveAs, ctx),
             },
-            Command::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             Command::Undo => drop(self.history.undo()),
             Command::Redo => drop(self.history.redo()),
             Command::Delete => {
                 let deleted = self.tools.delete(&mut self.history);
                 self.check(deleted);
             }
+            Command::ToggleVisible => {
+                let toggled = layers_panel::toggle_visible(&mut self.history, &self.tools.selection);
+                self.check(toggled);
+            }
+            Command::ToggleLocked => {
+                let toggled = layers_panel::toggle_locked(&mut self.history, &self.tools.selection);
+                self.check(toggled);
+            }
             Command::Cancel => self.tools.cancel(&mut self.history),
-            Command::MoveTool | Command::FrameTool | Command::RectangleTool | Command::EllipseTool => {
+            Command::NudgeLeft | Command::NudgeRight | Command::NudgeUp | Command::NudgeDown => {
+                // One unit, or ten with Shift, as in Figma.
+                let step = if ctx.input(|i| i.modifiers.shift) { 10.0 } else { 1.0 };
+                let by = match command {
+                    Command::NudgeLeft => Vec2::new(-step, 0.0),
+                    Command::NudgeRight => Vec2::new(step, 0.0),
+                    Command::NudgeUp => Vec2::new(0.0, -step),
+                    _ => Vec2::new(0.0, step),
+                };
+                let nudged = self.tools.nudge(&mut self.history, by);
+                self.check(nudged);
+            }
+            Command::MoveTool | Command::HandTool | Command::FrameTool | Command::RectangleTool | Command::EllipseTool => {
                 if let Some((tool, _)) = TOOLS.iter().find(|(_, picks)| *picks == command) {
                     self.tools.tool = *tool;
                 }
@@ -177,6 +256,18 @@ impl App {
             Command::ZoomIn => self.canvas.zoom_by(2.0),
             Command::ZoomOut => self.canvas.zoom_by(0.5),
             Command::ZoomTo100 => self.canvas.zoom_by(1.0 / self.canvas.view.zoom),
+            Command::ZoomToFit | Command::ZoomToSelection => {
+                // Everything on the page, or what is selected.
+                let document = self.history.document();
+                let all = || document.node(self.page).map(|page| page.children.iter().map(|node| node.id).collect()).unwrap_or_default();
+                let nodes: Vec<NodeId> = if command == Command::ZoomToFit { all() } else { self.tools.selection.clone() };
+                let area = self.corners(&nodes).into_iter().flatten().fold(None, |area: Option<Rect>, corner| {
+                    Some(area.map_or(Rect::from_points(corner, corner), |area| area.union_pt(corner)))
+                });
+                if let Some(area) = area {
+                    self.canvas.fit(area);
+                }
+            }
             Command::ToggleRulers => self.canvas.rulers = !self.canvas.rulers,
             Command::TogglePixelGrid => self.canvas.pixel_grid = !self.canvas.pixel_grid,
             Command::ToggleUi => self.show_ui = !self.show_ui,
@@ -197,8 +288,8 @@ impl App {
     fn menu_bar(&mut self, ui: &mut Ui) {
         const MENUS: [(&str, &[Command]); 3] = [
             ("File", &[Command::New, Command::Open, Command::Save, Command::SaveAs, Command::Quit]),
-            ("Edit", &[Command::Undo, Command::Redo, Command::Delete]),
-            ("View", &[Command::ZoomIn, Command::ZoomOut, Command::ZoomTo100, Command::ToggleRulers, Command::TogglePixelGrid, Command::ToggleUi]),
+            ("Edit", &[Command::Undo, Command::Redo, Command::Delete, Command::ToggleVisible, Command::ToggleLocked]),
+            ("View", &[Command::ZoomIn, Command::ZoomOut, Command::ZoomTo100, Command::ZoomToFit, Command::ZoomToSelection, Command::ToggleRulers, Command::TogglePixelGrid, Command::ToggleUi]),
         ];
         egui::MenuBar::new().ui(ui, |ui| {
             for (menu, commands) in MENUS {
@@ -226,50 +317,52 @@ impl App {
         });
     }
 
-    /// The page's nodes, front-most first as in Figma; a click selects one.
-    fn layers(&mut self, ui: &mut Ui) {
-        fn rows(ui: &mut Ui, nodes: &[std::sync::Arc<Node>], depth: usize, selection: &[NodeId], accent: egui::Color32, picked: &mut Option<NodeId>) {
-            for node in nodes.iter().rev() {
-                ui.horizontal(|ui| {
-                    ui.add_space(depth as f32 * 12.0);
-                    let mut name = RichText::new(&node.name);
-                    if selection.contains(&node.id) {
-                        name = name.color(accent).strong();
-                    }
-                    if ui.add(Button::new(name).frame(false)).clicked() {
-                        *picked = Some(node.id);
-                    }
-                });
-                rows(ui, &node.children, depth + 1, selection, accent, picked);
-            }
+    /// "Save your changes?", over everything else until it's answered.
+    fn confirm(&mut self, ctx: &egui::Context) {
+        if self.confirm.is_none() {
+            return;
         }
-        let mut picked = None;
-        if let Some(page) = self.history.document().node(self.page) {
-            rows(ui, &page.children, 0, &self.tools.selection, self.theme.accent, &mut picked);
+        let name = self.path.as_deref().map_or_else(|| "Untitled".into(), name_of);
+        let mut choice = None;
+        let modal = egui::Modal::new(egui::Id::new("confirm")).show(ctx, |ui| {
+            ui.label(format!("Save the changes to {name}?"));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                for (label, answer) in [("Save", Choice::Save), ("Don't Save", Choice::Discard), ("Cancel", Choice::Cancel)] {
+                    if ui.button(label).clicked() {
+                        choice = Some(answer);
+                    }
+                }
+            });
+        });
+        // Esc, or a click outside it, is Cancel.
+        if modal.should_close() {
+            choice = choice.or(Some(Choice::Cancel));
         }
-        if let Some(picked) = picked {
-            self.tools.selection = vec![picked];
+        if let Some(choice) = choice {
+            self.decide(choice, ctx);
         }
     }
 
     fn keys(&mut self, ctx: &egui::Context) {
-        // While a text field has focus, keys edit the text.
-        if !ctx.egui_wants_keyboard_input() {
+        // While a text field has focus, keys edit the text; while a question
+        // is up, it is answered first.
+        if !ctx.egui_wants_keyboard_input() && self.confirm.is_none() {
             for command in Command::pressed(ctx) {
                 self.run(command, ctx);
             }
         }
     }
 
-    /// The corners of each selected node's box, on the page.
-    fn selected(&self) -> Vec<[Point; 4]> {
+    /// The corners of each node's box, on the page.
+    fn corners(&self, nodes: &[NodeId]) -> Vec<[Point; 4]> {
         let document = self.history.document();
         let corners = |id: &NodeId| {
             let (to_page, size) = (document.to_page(*id)?, document.node(*id)?.size);
             let outline = Rect::from_origin_size((0.0, 0.0), size);
             Some([(outline.x0, outline.y0), (outline.x1, outline.y0), (outline.x1, outline.y1), (outline.x0, outline.y1)].map(|corner| to_page * Point::from(corner)))
         };
-        self.tools.selection.iter().filter_map(corners).collect()
+        nodes.iter().filter_map(corners).collect()
     }
 
     /// Lays out the window and returns the rectangle the canvas got.
@@ -300,7 +393,8 @@ impl App {
                 .show(ui, |ui| {
                     ui.strong("Layers");
                     ui.separator();
-                    self.layers(ui);
+                    let shown = self.layers.show(ui, &mut self.history, self.page, &mut self.tools.selection, &self.theme);
+                    self.check(shown);
                     ui.take_available_space();
                 });
             egui::Panel::right("properties")
@@ -310,12 +404,17 @@ impl App {
                 .show(ui, |ui| {
                     ui.strong("Design");
                     ui.separator();
+                    let shown = self.properties.show(ui, &mut self.history, &self.tools.selection);
+                    self.check(shown);
                     ui.take_available_space();
                 });
         }
-        let selected = self.selected();
+        let selected = self.corners(&self.tools.selection);
+        self.canvas.hand = self.tools.tool == Tool::Hand;
         let (rect, pointer) = egui::CentralPanel::no_frame().show(ui, |ui| self.canvas.show(ui, &self.theme, &selected)).inner;
         let keys = ui.input(|i| Keys { shift: i.modifiers.shift, alt: i.modifiers.alt });
+        // A handle is taken from six points away, whatever the zoom.
+        self.tools.grab = 6.0 / self.canvas.view.zoom;
         for event in pointer {
             let done = match event {
                 Pointer::Press(at) => {
@@ -354,12 +453,26 @@ impl eframe::App for App {
             self.theme = theme;
         }
         self.answer();
+        // A save that an answer asked for has finished: carry on with what
+        // was being done.
+        if !self.history.is_dirty()
+            && self.dialog.is_none()
+            && let Some(command) = self.after_save.take()
+        {
+            self.proceed(command, ctx);
+        }
+        // The compositor closing the window is Quit by another road.
+        if ctx.input(|i| i.viewport().close_requested()) && !self.closing && self.history.is_dirty() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.confirm = Some(Command::Quit);
+        }
         self.keys(ctx);
         self.update_title(ctx);
     }
 
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.show(ui);
+        self.confirm(ui.ctx());
     }
 }
 
@@ -467,9 +580,49 @@ mod tests {
     }
 
     #[test]
+    fn a_corner_resizes_at_any_zoom_and_arrows_nudge() {
+        let (ctx, mut app, canvas) = app();
+        app.canvas.view = crate::canvas::View { origin: Vec2::new(0.0, 0.0), zoom: 4.0 };
+        frame(&ctx, &mut app, key(Key::R, Modifiers::NONE));
+        // On screen 40..200 by 40..120: in the document 10..50 by 10..30.
+        drag(&ctx, &mut app, canvas.min + vec2(40.0, 40.0), canvas.min + vec2(200.0, 120.0));
+        // Take the bottom-right corner from four points off it.
+        drag(&ctx, &mut app, canvas.min + vec2(204.0, 123.0), canvas.min + vec2(284.0, 203.0));
+        assert_eq!(boxes(&app), [(NodeKind::Rectangle, Rect::new(10.0, 10.0, 70.0, 50.0))]);
+        assert_eq!(app.history.undo_name(), Some("Resize"));
+
+        frame(&ctx, &mut app, key(Key::ArrowRight, Modifiers::NONE));
+        frame(&ctx, &mut app, key(Key::ArrowUp, Modifiers::SHIFT));
+        assert_eq!(boxes(&app), [(NodeKind::Rectangle, Rect::new(11.0, 0.0, 71.0, 40.0))]);
+    }
+
+    #[test]
+    fn shift_1_and_shift_2_fit_the_page_and_the_selection() {
+        let (ctx, mut app, canvas) = app();
+        let on_screen = |app: &App, x: f64, y: f64| app.canvas.view.origin + Vec2::new(x, y) * app.canvas.view.zoom;
+        let middle = Vec2::new(f64::from(canvas.width()), f64::from(canvas.height())) / 2.0;
+        // Nothing on the page: nothing to fit.
+        frame(&ctx, &mut app, key(Key::Num1, Modifiers::SHIFT));
+        assert_eq!(app.canvas.view, crate::canvas::View::default());
+
+        for (from, to) in [((10.0, 10.0), (50.0, 30.0)), ((300.0, 200.0), (340.0, 260.0))] {
+            frame(&ctx, &mut app, key(Key::R, Modifiers::NONE));
+            drag(&ctx, &mut app, canvas.min + vec2(from.0, from.1), canvas.min + vec2(to.0, to.1));
+        }
+        // Both rectangles: 10..340 by 10..260, so its middle is (175, 135).
+        frame(&ctx, &mut app, key(Key::Num1, Modifiers::SHIFT));
+        assert!((on_screen(&app, 175.0, 135.0) - middle).hypot() < 1e-6);
+        let fit = app.canvas.view.zoom;
+        // The selection is the second one alone: closer in, on its middle.
+        frame(&ctx, &mut app, key(Key::Num2, Modifiers::SHIFT));
+        assert!(app.canvas.view.zoom > fit * 2.0);
+        assert!((on_screen(&app, 320.0, 230.0) - middle).hypot() < 1e-6);
+    }
+
+    #[test]
     fn letters_pick_tools_and_escape_goes_back_to_move() {
         let (ctx, mut app, _) = app();
-        for (letter, tool) in [(Key::F, Tool::Frame), (Key::R, Tool::Rectangle), (Key::O, Tool::Ellipse), (Key::V, Tool::Move)] {
+        for (letter, tool) in [(Key::F, Tool::Frame), (Key::R, Tool::Rectangle), (Key::O, Tool::Ellipse), (Key::H, Tool::Hand), (Key::V, Tool::Move)] {
             frame(&ctx, &mut app, key(letter, Modifiers::NONE));
             assert_eq!(app.tools.tool, tool);
         }
@@ -501,10 +654,62 @@ mod tests {
         other.open(&folder);
         assert_eq!(other.history.document(), app.history.document());
         assert_eq!((other.path.as_deref(), other.history.is_dirty(), &other.status), (Some(folder.as_path()), false, &None));
+        // By the document.json inside it, as the file dialog picks it.
+        let (_, mut by_file, _) = self::app();
+        by_file.open(&folder.join("document.json"));
+        assert_eq!((by_file.history.document(), by_file.path.as_deref()), (app.history.document(), Some(folder.as_path())));
+        // And as one zipped file.
+        let zipped = folder.with_extension("omavecz");
+        app.save_to(&zipped);
+        by_file.open(&zipped);
+        by_file.update_title(&ctx);
+        assert_eq!((by_file.history.document(), by_file.title.as_str()), (app.history.document(), "Logo — Omavec"));
         // Opening something that isn't a document says so and changes nothing.
         other.open(&folder.join("pages"));
         assert!(other.status.as_ref().is_some_and(|(message, wrong)| *wrong && message.starts_with("Couldn't open: ")));
         assert_eq!(other.history.document(), app.history.document());
+        let _ = std::fs::remove_dir_all(folder.parent().unwrap());
+    }
+
+    #[test]
+    fn unsaved_changes_are_asked_about_before_they_are_thrown_away() {
+        let folder = std::env::temp_dir().join(format!("omavec-confirm-test-{}", std::process::id())).join("Kept.omavec");
+        let _ = std::fs::remove_dir_all(&folder);
+        let (ctx, mut app, canvas) = app();
+        // Nothing to lose: New just happens.
+        frame(&ctx, &mut app, key(Key::N, Modifiers::COMMAND));
+        assert_eq!(app.confirm, None);
+
+        let draw = |app: &mut App| {
+            frame(&ctx, app, key(Key::R, Modifiers::NONE));
+            drag(&ctx, app, canvas.min + vec2(50.0, 60.0), canvas.min + vec2(250.0, 160.0));
+        };
+        draw(&mut app);
+        frame(&ctx, &mut app, key(Key::N, Modifiers::COMMAND));
+        assert_eq!((app.confirm, boxes(&app).len()), (Some(Command::New), 1));
+        // While it's asking, keys don't reach the document.
+        frame(&ctx, &mut app, key(Key::Delete, Modifiers::NONE));
+        frame(&ctx, &mut app, key(Key::Z, Modifiers::COMMAND));
+        assert_eq!(boxes(&app).len(), 1);
+
+        app.decide(Choice::Cancel, &ctx);
+        assert_eq!((app.confirm, boxes(&app).len()), (None, 1));
+
+        frame(&ctx, &mut app, key(Key::N, Modifiers::COMMAND));
+        app.decide(Choice::Discard, &ctx);
+        assert_eq!((app.confirm, boxes(&app).len(), app.history.is_dirty()), (None, 0, false));
+
+        // Save, for a document that has somewhere to go: saved, then New.
+        draw(&mut app);
+        app.save_to(&folder);
+        frame(&ctx, &mut app, key(Key::ArrowRight, Modifiers::NONE));
+        frame(&ctx, &mut app, key(Key::N, Modifiers::COMMAND));
+        assert_eq!(app.confirm, Some(Command::New));
+        app.decide(Choice::Save, &ctx);
+        eframe::App::logic(&mut app, &ctx, &mut eframe::Frame::_new_kittest());
+        assert_eq!((boxes(&app).len(), &app.path, app.history.is_dirty()), (0, &None, false));
+        let saved = file::open(&folder).unwrap();
+        assert_eq!(saved.pages[0].children[0].transform.translation().x, 51.0);
         let _ = std::fs::remove_dir_all(folder.parent().unwrap());
     }
 
@@ -570,5 +775,73 @@ mod tests {
 
         frame(&ctx, &mut app, key(Key::Quote, Modifiers::SHIFT));
         assert!(app.canvas.pixel_grid);
+    }
+
+    #[test]
+    fn ctrl_shift_h_and_ctrl_shift_l_toggle_visible_and_locked() {
+        let (ctx, mut app, canvas) = app();
+        frame(&ctx, &mut app, key(Key::R, Modifiers::NONE));
+        drag(&ctx, &mut app, canvas.min + vec2(50.0, 60.0), canvas.min + vec2(250.0, 160.0));
+        assert_eq!(app.tools.selection.len(), 1);
+        let id = app.tools.selection[0];
+        assert!(app.history.document().node(id).unwrap().visible);
+        assert!(!app.history.document().node(id).unwrap().locked);
+
+        frame(&ctx, &mut app, key(Key::H, Modifiers::COMMAND | Modifiers::SHIFT));
+        assert!(!app.history.document().node(id).unwrap().visible);
+
+        frame(&ctx, &mut app, key(Key::H, Modifiers::COMMAND | Modifiers::SHIFT));
+        assert!(app.history.document().node(id).unwrap().visible);
+
+        frame(&ctx, &mut app, key(Key::L, Modifiers::COMMAND | Modifiers::SHIFT));
+        assert!(app.history.document().node(id).unwrap().locked);
+
+        frame(&ctx, &mut app, key(Key::L, Modifiers::COMMAND | Modifiers::SHIFT));
+        assert!(!app.history.document().node(id).unwrap().locked);
+    }
+
+    #[test]
+    fn while_renaming_typed_letters_and_backspace_reach_the_text_and_nothing_else() {
+        let (ctx, mut app, canvas) = app();
+        frame(&ctx, &mut app, key(Key::R, Modifiers::NONE));
+        drag(&ctx, &mut app, canvas.min + vec2(50.0, 60.0), canvas.min + vec2(250.0, 160.0));
+        assert_eq!(app.tools.tool, Tool::Move);
+        assert_eq!(boxes(&app).len(), 1);
+        let id = app.tools.selection[0];
+
+        let rect = ctx.read_response(crate::layers_panel::row_id(id)).unwrap().rect;
+        let pos = pos2(rect.left() + 20.0, rect.center().y);
+        let button = |pressed| Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
+        frame(&ctx, &mut app, vec![Event::PointerMoved(pos), button(true)]);
+        frame(&ctx, &mut app, vec![button(false)]);
+        frame(&ctx, &mut app, vec![button(true)]);
+        frame(&ctx, &mut app, vec![button(false)]);
+        assert!(app.layers.renaming.is_some());
+
+        // First frame: text edit requests focus and selects all text.
+        frame(&ctx, &mut app, vec![]);
+
+        // Type 'r': should not pick Rectangle tool.
+        frame(&ctx, &mut app, [vec![Event::Text("r".into())], key(Key::R, Modifiers::NONE)].concat());
+        assert_eq!(app.tools.tool, Tool::Move);
+
+        // Type 'v': should not pick Move tool.
+        frame(&ctx, &mut app, [vec![Event::Text("v".into())], key(Key::V, Modifiers::NONE)].concat());
+        assert_eq!(app.tools.tool, Tool::Move);
+
+        // Type 'o': should not pick Ellipse tool.
+        frame(&ctx, &mut app, [vec![Event::Text("o".into())], key(Key::O, Modifiers::NONE)].concat());
+        assert_eq!(app.tools.tool, Tool::Move);
+
+        // Backspace: should not delete the node.
+        frame(&ctx, &mut app, key(Key::Backspace, Modifiers::NONE));
+        assert_eq!(boxes(&app).len(), 1);
+
+        // Press Enter to submit rename.
+        frame(&ctx, &mut app, key(Key::Enter, Modifiers::NONE));
+        assert_eq!(app.layers.renaming, None);
+        assert_eq!(app.tools.tool, Tool::Move);
+        assert_eq!(boxes(&app).len(), 1);
+        assert_eq!(app.history.document().node(id).unwrap().name, "rv");
     }
 }

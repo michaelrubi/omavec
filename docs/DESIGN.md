@@ -98,7 +98,11 @@ Every visual node carries:
   or number can be bound to a variable.
 - **Strokes**: a stack of paints plus one stroke style: weight, align
   (inside/centre/outside), cap, join, miter limit, dashes, and an optional
-  **width profile** (widths at positions along each segment).
+  **width profile** (widths at positions along each segment). A stroke is
+  drawn as the area it covers: a centred stroke's outline, and for inside
+  or outside a stroke twice as wide cut to the half inside or outside the
+  shape. SVG has only centred strokes, so those export as `stroke`
+  attributes and the other two as the area, a filled path.
 - **Effects**: drop shadow, inner shadow, layer blur, background blur.
 - **Modifiers**: an ordered, live list of geometry operations: Offset Path,
   Outline Stroke, Warp/Envelope, Round Corners, Simplify. This is
@@ -294,7 +298,8 @@ omavec tokens file.omavec --format css|tailwind|omarchy
 ```
 
 The CLI uses the same engine, renderer and commands as the app, with no
-window and no GPU.
+window and no GPU. `omavec file.omavec` and `omavec export` exist; the
+other three are planned.
 
 ## Omarchy integration
 
@@ -335,7 +340,7 @@ Figma's defaults, plus Illustrator's letters for the tools Figma lacks.
 | Ctrl+\ | Show/hide UI | Ctrl+Q | Quit |
 | Ctrl+Z / Ctrl+Shift+Z | Undo / redo | Delete, Backspace | Delete |
 | Ctrl+N / Ctrl+O | New / open | Ctrl+S / Ctrl+Shift+S | Save / save as |
-| Esc | Give up the drag, then the tool | | |
+| Esc | Give up the drag, then the tool | Arrows / Shift+arrows | Nudge by 1 / 10 |
 | Shift+R | Rulers | Shift+' | Pixel grid |
 
 On the canvas: the wheel pans, Ctrl+wheel or a pinch zooms about the

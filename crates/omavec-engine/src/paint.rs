@@ -1,5 +1,6 @@
 //! What a node is filled with.
 
+use omavec_geom::stroke::Align;
 use serde::{Deserialize, Serialize};
 
 /// An sRGB colour. In a file it is `"#rrggbb"`.
@@ -55,6 +56,29 @@ pub struct Paint {
 impl Paint {
     pub fn solid(color: Color) -> Self {
         Self { kind: PaintKind::Solid { color }, opacity: 1.0, visible: true }
+    }
+}
+
+/// A node's stroke: what it is painted with, and how wide and on which
+/// side of the edge. With no paints there is no stroke.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Stroke {
+    /// Bottom to top, like fills.
+    pub paints: Vec<Paint>,
+    pub weight: f64,
+    pub align: Align,
+}
+
+impl Default for Stroke {
+    /// What Figma starts a stroke with, less the paint.
+    fn default() -> Self {
+        Self { paints: Vec::new(), weight: 1.0, align: Align::Inside }
+    }
+}
+
+impl Stroke {
+    pub(crate) fn is_none(&self) -> bool {
+        self.paints.is_empty()
     }
 }
 

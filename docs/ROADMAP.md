@@ -6,9 +6,11 @@ finished items are ~~struck through~~ with "(done)", and anything deferred
 goes on a "Later:" line under the item.
 
 Status: Phase 0 is done bar Michael trying the shell by hand. Phase 1 is
-under way: you can draw frames, rectangles and ellipses, select, move and
-delete them, undo and redo, and save and reopen the document. Nothing can
-be styled, resized or exported yet.
+well under way: you can draw frames, rectangles and ellipses; select,
+move, resize, rotate and delete them; give them fills and strokes; rename,
+hide and lock layers; undo and redo; save to a `.omavec` folder or a
+`.omavecz` file; and export frames as SVG and PNG from a terminal. None of
+it has been tried by hand yet.
 
 ## Borrowing from VectorCraft
 
@@ -185,16 +187,21 @@ reopen and export.
   leaves the rest of the folder alone; opening refuses a newer format and
   names what is wrong with a damaged or badly merged folder. New
   (Ctrl+N), Open (Ctrl+O), Save (Ctrl+S) and Save As (Ctrl+Shift+S) in
-  the app, `omavec logo.omavec` from a terminal, and a dot in the title
-  while there are unsaved changes. Left: assets, recent files, autosave
-  and crash recovery, asking before unsaved changes are thrown away, and
-  `.omavecz`.
-- Canvas: pan (Space/H/middle drag), zoom (Ctrl+wheel, Shift+0/1/2, pinch),
-  pixel grid at high zoom, rulers. Phase 0 already built wheel, middle
-  drag and Space+drag panning, Ctrl+wheel and pinch zoom about the
-  pointer, and Ctrl+= / Ctrl+- / Shift+0. The pixel grid (Shift+', from
-  400%) and rulers (Shift+R) are built; the Hand tool and zoom to fit and
-  to selection are left.
+  the app, `omavec logo.omavec` from a terminal, a dot in the title while
+  there are unsaved changes, and a question before New, Open, Quit or
+  closing the window would throw them away. `.omavecz` is built in the
+  engine (the same files zipped, the same bytes for the same document)
+  with its MIME type and launcher entry; Save As takes a name ending in
+  `.omavecz`, and Open takes one, or the `document.json` in a folder. Left: assets, recent files, and
+  autosave and crash recovery.
+- ~~Canvas: pan (Space/H/middle drag), zoom (Ctrl+wheel, Shift+0/1/2, pinch),
+  pixel grid at high zoom, rulers.~~ (done) The wheel, middle drag,
+  Space+drag and the Hand tool (H) pan; Ctrl+wheel and a pinch zoom about
+  the pointer; Ctrl+= and Ctrl+- zoom in steps, Shift+0 to 100%, Shift+1
+  to fit the page and Shift+2 to fit the selection. The pixel grid shows
+  from 400% (Shift+' toggles it) and Shift+R shows rulers.
+  Later: the pointer's position marked on the rulers; guides dragged out
+  of them.
 - Selection: click, Shift+click, marquee, deep select (Ctrl+click), select
   in group (double-click / Enter), Esc to parent. Built so far: click
   (the page's child, or what is inside a top-level frame), Shift+click to
@@ -209,6 +216,13 @@ reopen and export.
   with arrows (Shift: 10); numeric X/Y/W/H/rotation in the properties panel.
   Built so far: dragging the selection moves it, as one undo step, also
   inside rotated or scaled frames; Esc puts it back; Delete removes it.
+  One selected node resizes by its corners and anywhere along its edges,
+  along its own sides if it is rotated, with Shift keeping proportions and
+  Alt resizing about the middle. Arrows nudge by 1, or 10 with Shift. The
+  Design panel has X, Y, W, H and rotation to drag or type; rotation is
+  about the middle, anticlockwise as in Figma. Left: rotate handles,
+  resizing several nodes at once, resize cursors, Shift to keep a move on
+  one axis, and children that follow their frame (constraints, Phase 5).
 - Tools: Frame (artboards = top-level frames, with Figma's device presets),
   Rectangle (per-corner radii), Ellipse (arc/ratio), Polygon, Star, Line,
   Arrow. Built so far: Frame (F), Rectangle (R) and Ellipse (O) by
@@ -219,18 +233,39 @@ reopen and export.
   linear/radial/angular/diamond gradients with on-canvas handles; the
   colour picker with eyedropper. Built so far: a stack of solid fills per
   node with opacity and visibility, Figma's defaults (grey shapes, white
-  frames), drawn by the canvas. Nothing in the UI changes them yet.
+  frames), and a stroke with its own stack of paints, a weight and a side
+  of the edge (inside, centre or outside), drawn as the area it covers
+  (`omavec_geom::stroke::outline`, on `vectorcraft-pathops`). The Design
+  panel lists one selected node's fills and stroke paints, top first,
+  with a colour picker, opacity, a show/hide box and add and remove, and
+  the stroke's weight and side; a drag on any of them is one undo step.
+  Left: blend modes, gradients, the eyedropper, caps, joins and dashes,
+  and editing several nodes at once.
   Later: a node's opacity as a layer, not multiplied into its children;
-  frames that clip what they draw (hit testing already respects it).
+  frames that clip what they draw (hit testing already respects it); a
+  stroke counted in hit testing and in a node's bounds; the hairline of
+  backdrop that shows between a fill and an outside stroke where their
+  antialiased edges meet.
 - Panels: layers (tree, rename, reorder by drag, hide, lock, multi-select),
-  properties (Figma's right panel layout). Built so far: the layers list,
-  front-most first, where a click selects.
+  properties (Figma's right panel layout). Built so far: the layers panel
+  (select, Shift-select, rename by double-click, hide and lock per row and
+  by Ctrl+Shift+H / Ctrl+Shift+L); reordering by drag and the rest of the
+  properties panel are left.
 - Smart guides and snapping: edges, centres, equal spacing, pixel grid.
 - Group (Ctrl+G), frame selection (Ctrl+Alt+G), duplicate (Ctrl+D,
   Alt+drag), copy/paste within Omavec and as SVG to the Wayland clipboard.
 - Export: per-node export settings (SVG, PNG @1x/@2x/@3x); `omavec export`
   CLI; `vello_cpu` for headless PNG. `vectorcraft-svg`'s writer is the
   reference for the SVG side.
+  Built so far: `omavec_engine::svg::write` turns a node into SVG
+  (`<rect>`, `<ellipse>` and `<g>`, translations folded into `x`/`y`,
+  numbers to three decimals), and a test rasterises it with resvg and
+  compares it with our own rendering, pixel by pixel. `omavec export
+  file.omavec --frame Logo --format svg,png@2x --out dist/` writes
+  top-level frames with no window: every frame if none is named, PNG at 1×
+  if no format is. Left: exporting from the app, export settings kept on
+  nodes, anything that isn't a top-level frame, clipping, and layer names
+  as ids.
 - `OMAVEC_SCRIPT` replay and the egui `Harness` for UI tests.
 - Command palette (Ctrl+K, Ctrl+/) listing every `Command`, and `:` to
   open it as a command line.

@@ -116,6 +116,8 @@ pub struct Canvas {
     pub pixel_grid: bool,
     /// Whether to show the zoom and the last frame's time in the corner.
     pub readout: bool,
+    /// The Hand tool is out: a plain drag pans, as Space+drag always does.
+    pub hand: bool,
     list: Arc<DisplayList>,
     /// Counts the lists drawn, so a new one is asked for even in the same view.
     generation: u64,
@@ -134,13 +136,24 @@ pub struct Canvas {
 impl Canvas {
     pub fn new(list: DisplayList, centre: Option<Point>) -> Self {
         let (requests, frames) = worker();
-        Self { view: View::default(), rulers: false, pixel_grid: true, readout: false, list: Arc::new(list), generation: 0, requests, frames, asked: None, shown: None, size: Vec2::ZERO, centre }
+        Self { view: View::default(), rulers: false, pixel_grid: true, readout: false, hand: false, list: Arc::new(list), generation: 0, requests, frames, asked: None, shown: None, size: Vec2::ZERO, centre }
     }
 
     /// Draws `list` from now on.
     pub fn set_list(&mut self, list: DisplayList) {
         self.list = Arc::new(list);
         self.generation += 1;
+    }
+
+    /// Shows all of `area` (in document coordinates) in the middle of the
+    /// canvas, with a little room round it.
+    pub fn fit(&mut self, area: omavec_geom::kurbo::Rect) {
+        let zoom = (self.size.x / area.width()).min(self.size.y / area.height()) * 0.9;
+        // An area with no size, or a canvas not laid out yet, has no fit.
+        if zoom.is_finite() && zoom > 0.0 {
+            self.view.zoom = zoom.clamp(ZOOM_RANGE.0, ZOOM_RANGE.1);
+            self.view.origin = self.size / 2.0 - area.center().to_vec2() * self.view.zoom;
+        }
     }
 
     /// Zooms by `factor` about the middle of the canvas.
@@ -164,7 +177,7 @@ impl Canvas {
 
         // Middle drag or Space+drag pans; the wheel pans, and with Ctrl (or a
         // pinch) zooms about the pointer.
-        let space = ui.input(|i| i.key_down(Key::Space));
+        let space = self.hand || ui.input(|i| i.key_down(Key::Space));
         if response.dragged_by(PointerButton::Middle) || (space && response.dragged_by(PointerButton::Primary)) {
             self.view.origin += moved(response.drag_delta());
         }
@@ -241,9 +254,16 @@ impl Canvas {
             let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
             painter.image(texture.id(), place, uv, Color32::WHITE);
         }
+        let outline = egui::Stroke::new(1.5, theme.accent);
         for corners in selected {
             let corners = corners.map(|corner| to_screen(self.view.origin + corner.to_vec2() * self.view.zoom));
-            painter.add(egui::Shape::closed_line(corners.to_vec(), egui::Stroke::new(1.5, theme.accent)));
+            painter.add(egui::Shape::closed_line(corners.to_vec(), outline));
+            // One node alone shows the corners it can be resized by.
+            if selected.len() == 1 {
+                for corner in corners {
+                    painter.rect(Rect::from_center_size(corner, egui::vec2(7.0, 7.0)), 0.0, Color32::WHITE, outline, egui::StrokeKind::Inside);
+                }
+            }
         }
         rulers::paint(&painter, rect, self.view, theme, self.rulers, self.pixel_grid);
         if let Some((_, _, took)) = &self.shown
@@ -429,6 +449,35 @@ mod tests {
         harness.frame(vec![button(PointerButton::Primary, true, 150.0, 150.0)]);
         harness.frame(vec![Event::PointerMoved(pos2(200.0, 200.0))]);
         harness.frame(vec![button(PointerButton::Primary, false, 200.0, 200.0), space(false)]);
+        assert!(harness.pointer.iter().all(|event| *event == Pointer::Release), "{:?}", harness.pointer);
+    }
+
+    #[test]
+    fn fitting_an_area_centres_it_with_room_to_spare() {
+        let mut harness = Harness::new();
+        // 800 × 600 canvas; a 400 × 100 area is limited by its width.
+        harness.canvas.fit(omavec_geom::kurbo::Rect::new(1000.0, 2000.0, 1400.0, 2100.0));
+        let view = harness.canvas.view;
+        assert!((view.zoom - 1.8).abs() < 1e-9, "{view:?}");
+        let middle = view.origin + Vec2::new(1200.0, 2050.0) * view.zoom;
+        assert!((middle - Vec2::new(400.0, 300.0)).hypot() < 1e-9, "{middle:?}");
+        // Nothing to fit: the view stays.
+        harness.canvas.fit(omavec_geom::kurbo::Rect::new(5.0, 5.0, 5.0, 5.0));
+        assert_eq!(harness.canvas.view, view);
+        // A speck fits at the deepest zoom, not beyond.
+        harness.canvas.fit(omavec_geom::kurbo::Rect::new(0.0, 0.0, 0.001, 0.001));
+        assert_eq!(harness.canvas.view.zoom, 256.0);
+    }
+
+    #[test]
+    fn with_the_hand_tool_a_plain_drag_pans() {
+        let button = |pressed, x, y| Event::PointerButton { pos: pos2(x, y), button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
+        let mut harness = Harness::new();
+        harness.canvas.hand = true;
+        harness.frame(vec![button(true, 400.0, 300.0)]);
+        harness.frame(vec![Event::PointerMoved(pos2(430.0, 280.0))]);
+        harness.frame(vec![button(false, 430.0, 280.0)]);
+        assert_eq!(harness.canvas.view.origin, Vec2::new(30.0, -20.0));
         assert!(harness.pointer.iter().all(|event| *event == Pointer::Release), "{:?}", harness.pointer);
     }
 

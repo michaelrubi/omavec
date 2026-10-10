@@ -5,6 +5,7 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 pub mod network;
+pub mod stroke;
 
 pub use kurbo;
 pub use vectorcraft_geom::FillRule;

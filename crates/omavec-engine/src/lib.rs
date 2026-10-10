@@ -9,7 +9,9 @@ mod document;
 pub mod file;
 mod history;
 mod paint;
+pub mod svg;
 
 pub use document::{Document, Error, Node, NodeId, NodeKind};
 pub use history::History;
-pub use paint::{Color, Paint, PaintKind};
+pub use omavec_geom::stroke::Align;
+pub use paint::{Color, Paint, PaintKind, Stroke};

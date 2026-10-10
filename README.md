@@ -9,9 +9,9 @@ without switching apps.
 > Omavec is an independent project. It is not made by or affiliated with
 > Omarchy.
 
-**Status:** early. You can draw frames, rectangles and ellipses, move and
-delete them, undo, and save to a `.omavec` folder. That is all so far. The
-plan:
+**Status:** early. You can draw frames, rectangles and ellipses, move,
+resize and recolour them, undo, save to a `.omavec` folder, and export
+frames as SVG and PNG with `omavec export`. That is all so far. The plan:
 
 - [docs/DECISIONS.md](docs/DECISIONS.md): what Omavec is and isn't, and why
 - [docs/DESIGN.md](docs/DESIGN.md): the architecture

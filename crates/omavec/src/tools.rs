@@ -3,12 +3,14 @@
 //! one undo step.
 
 use omavec_engine::{Document, Error, History, NodeId, NodeKind};
-use omavec_geom::kurbo::{Affine, Point, Rect, Size, Vec2};
+use omavec_geom::kurbo::{Affine, Line, ParamCurveNearest, Point, Rect, Size, Vec2};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Tool {
     #[default]
     Move,
+    /// Drags pan the canvas; the canvas does it and the tools see nothing.
+    Hand,
     Frame,
     Rectangle,
     Ellipse,
@@ -18,7 +20,7 @@ impl Tool {
     /// What the tool draws, if it draws.
     fn draws(self) -> Option<NodeKind> {
         match self {
-            Tool::Move => None,
+            Tool::Move | Tool::Hand => None,
             Tool::Frame => Some(NodeKind::Frame { clip: true }),
             Tool::Rectangle => Some(NodeKind::Rectangle),
             Tool::Ellipse => Some(NodeKind::Ellipse),
@@ -42,12 +44,25 @@ enum Drag {
     /// Moving the selection: each node with the transform it started with
     /// and the way from the page's coordinates to its parent's.
     Move { start: Point, nodes: Vec<(NodeId, Affine, Affine)>, moved: bool },
+    /// Resizing `node` by one of its handles: the transform and size it
+    /// started with, and the way from the page to its own coordinates then.
+    /// `offset` is from where the pointer took the handle to the handle
+    /// itself, so the box doesn't jump to the pointer.
+    Resize { node: NodeId, handle: Handle, began: Affine, size: Size, to_local: Affine, offset: Vec2, moved: bool },
 }
+
+/// Where a box is resized from, as fractions of its width and height: 0 or
+/// 1 for a side that moves, 0.5 for a direction that stays as it is. The
+/// four corners and the four edges.
+type Handle = (f64, f64);
 
 #[derive(Default)]
 pub struct Tools {
     pub tool: Tool,
     pub selection: Vec<NodeId>,
+    /// How near the pointer must be to a handle to take it, in page units:
+    /// a few pixels at the canvas's zoom.
+    pub grab: f64,
     drag: Option<Drag>,
 }
 
@@ -65,7 +80,72 @@ fn drawn(start: Point, to: Point, keys: Keys) -> Rect {
     Rect::from_points(from, start + reach)
 }
 
+/// A box of `size` after the pointer has taken `handle` to `to` (in the
+/// box's own coordinates): Shift keeps its proportions, and Alt moves the
+/// far side as much the other way, so its middle stays put. Dragged past
+/// its far side, the box comes out the other way round rather than inside
+/// out.
+fn resized(size: Size, handle: Handle, to: Point, keys: Keys) -> Rect {
+    // The near and far edge along one axis: the side with the handle follows
+    // the pointer.
+    let span = |handle: f64, extent: f64, to: f64| match handle {
+        0.0 => (to, extent),
+        1.0 => (0.0, to),
+        _ => (0.0, extent),
+    };
+    let (mut x, mut y) = (span(handle.0, size.width, to.x), span(handle.1, size.height, to.y));
+    if keys.shift && size.width > 0.0 && size.height > 0.0 {
+        let (grown_x, grown_y) = ((x.1 - x.0) / size.width, (y.1 - y.0) / size.height);
+        // A corner takes the larger change for both; an edge passes its own
+        // change to the other direction, about the middle.
+        let scale = match handle {
+            (0.5, _) => grown_y.abs(),
+            (_, 0.5) => grown_x.abs(),
+            _ => grown_x.abs().max(grown_y.abs()),
+        };
+        let keep = |handle: f64, span: (f64, f64), grown: f64, extent: f64| {
+            let length = extent * scale * if grown < 0.0 { -1.0 } else { 1.0 };
+            match handle {
+                0.0 => (span.1 - length, span.1),
+                1.0 => (span.0, span.0 + length),
+                _ => ((extent - extent * scale) / 2.0, (extent + extent * scale) / 2.0),
+            }
+        };
+        (x, y) = (keep(handle.0, x, grown_x, size.width), keep(handle.1, y, grown_y, size.height));
+    }
+    if keys.alt {
+        let mirror = |handle: f64, span: (f64, f64), extent: f64| match handle {
+            0.0 => (span.0, extent - span.0),
+            1.0 => (extent - span.1, span.1),
+            _ => span,
+        };
+        (x, y) = (mirror(handle.0, x, size.width), mirror(handle.1, y, size.height));
+    }
+    Rect::from_points((x.0, y.0), (x.1, y.1))
+}
+
+/// A move of `by` on the page, as a node whose parent is reached by
+/// `to_parent` sees it.
+fn in_parent(to_parent: Affine, by: Vec2) -> Vec2 {
+    to_parent * by.to_point() - to_parent * Point::ZERO
+}
+
 impl Tools {
+    /// The handle of `id`'s box within reach of `at`, corners before edges.
+    fn handle_at(&self, document: &Document, id: NodeId, at: Point) -> Option<Handle> {
+        let node = document.node(id).filter(|node| !node.locked)?;
+        let to_page = document.to_page(id)?;
+        let on_page = |handle: Handle| to_page * Point::new(handle.0 * node.size.width, handle.1 * node.size.height);
+        let corners = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)];
+        let corner = corners.into_iter().find(|corner| (on_page(*corner) - at).hypot() <= self.grab);
+        // An edge is taken anywhere along it, as in Figma.
+        let edge = (0..4).map(|i| (corners[i], corners[(i + 1) % 4])).find_map(|(a, b)| {
+            let near = Line::new(on_page(a), on_page(b)).nearest(at, 1e-9).distance_sq <= self.grab * self.grab;
+            near.then_some(((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0))
+        });
+        corner.or(edge)
+    }
+
     /// The node a click at `at` selects: the front-most child of the page
     /// there, or, where that is a top-level frame, what is in the frame.
     fn pick(document: &Document, page: NodeId, at: Point) -> Option<NodeId> {
@@ -90,6 +170,16 @@ impl Tools {
                 Some(Drag::Draw { kind, parent, start: to_parent * at, to_parent, node: None })
             }
             None => {
+                // A handle of the one selected node comes before whatever is under it.
+                if let [node] = self.selection[..]
+                    && let Some(handle) = self.handle_at(document, node, at)
+                    && let (Some(began), Some(to_page)) = (document.node(node), document.to_page(node))
+                {
+                    let to_local = to_page.inverse();
+                    let offset = Point::new(handle.0 * began.size.width, handle.1 * began.size.height) - to_local * at;
+                    self.drag = Some(Drag::Resize { node, handle, began: began.transform, size: began.size, to_local, offset, moved: false });
+                    return;
+                }
                 let picked = Self::pick(document, page, at);
                 match picked {
                     // Shift adds to the selection or takes away from it.
@@ -148,9 +238,20 @@ impl Tools {
                 history.edit("Move", |document| {
                     for (id, began, to_parent) in nodes.iter() {
                         // The drag is in page coordinates; a node moves in its parent's.
-                        let by = *to_parent * by.to_point() - *to_parent * Point::ZERO;
-                        document.node_mut(*id)?.transform = Affine::translate(by) * *began;
+                        document.node_mut(*id)?.transform = Affine::translate(in_parent(*to_parent, by)) * *began;
                     }
+                    Ok(())
+                })?;
+            }
+            Some(Drag::Resize { node, handle, began, size, to_local, offset, moved }) => {
+                if !*moved {
+                    history.begin("Resize");
+                    *moved = true;
+                }
+                let area = resized(*size, *handle, *to_local * at + *offset, keys);
+                history.edit("Resize", |document| {
+                    let shape = document.node_mut(*node)?;
+                    (shape.transform, shape.size) = (*began * Affine::translate(area.origin().to_vec2()), area.size());
                     Ok(())
                 })?;
             }
@@ -179,7 +280,7 @@ impl Tools {
                 // As in Figma, a shape drawn hands back to the Move tool.
                 self.tool = Tool::Move;
             }
-            Some(Drag::Move { .. }) => history.commit(),
+            Some(Drag::Move { .. } | Drag::Resize { .. }) => history.commit(),
             None => {}
         }
         Ok(())
@@ -192,9 +293,22 @@ impl Tools {
                 history.cancel();
                 self.selection.retain(|selected| Some(*selected) != node);
             }
-            Some(Drag::Move { .. }) => history.cancel(),
+            Some(Drag::Move { .. } | Drag::Resize { .. }) => history.cancel(),
             None => self.tool = Tool::Move,
         }
+    }
+
+    /// The arrow keys: moves the selection `by` on the page, as one step.
+    pub fn nudge(&mut self, history: &mut History, by: Vec2) -> Result<(), Error> {
+        let selection = &self.selection;
+        history.edit("Nudge", |document| {
+            for id in selection {
+                let to_parent = document.parent(*id).and_then(|parent| document.to_page(parent)).unwrap_or_default().inverse();
+                let node = document.node_mut(*id)?;
+                node.transform = Affine::translate(in_parent(to_parent, by)) * node.transform;
+            }
+            Ok(())
+        })
     }
 
     /// Delete: removes the selected nodes, as one step.
@@ -421,6 +535,133 @@ mod tests {
         desk.stroke((before.x, before.y), &[(before.x + 50.0, before.y - 20.0)], Keys::default());
         let after = desk.bounds(dot).center();
         assert!((after - before - Vec2::new(50.0, -20.0)).hypot() < 1e-9, "{before:?} to {after:?}");
+    }
+
+    /// Draws a 200 × 100 rectangle at (100, 100), selected, with handles
+    /// that take anything within 4 units.
+    fn with_rectangle() -> (Desk, NodeId) {
+        let mut desk = Desk::new();
+        let id = desk.draw(Tool::Rectangle, (100.0, 100.0), (300.0, 200.0));
+        desk.tools.grab = 4.0;
+        (desk, id)
+    }
+
+    #[test]
+    fn handles_resize_from_the_side_they_are_on() {
+        let none = Keys::default();
+        let (mut desk, id) = with_rectangle();
+        // The bottom-right corner, taken a little off it: it moves as far as
+        // the pointer does, without jumping to it first.
+        desk.stroke((302.0, 201.0), &[(352.0, 261.0)], none);
+        assert_eq!(desk.bounds(id), Rect::new(100.0, 100.0, 350.0, 260.0));
+        assert_eq!(desk.history.undo_name(), Some("Resize"));
+        // The top-left corner: the far corner stays.
+        desk.stroke((100.0, 100.0), &[(90.0, 120.0)], none);
+        assert_eq!(desk.bounds(id), Rect::new(90.0, 120.0, 350.0, 260.0));
+        // The left edge, anywhere along it: only the width changes.
+        desk.stroke((90.0, 150.0), &[(40.0, 500.0)], none);
+        assert_eq!(desk.bounds(id), Rect::new(40.0, 120.0, 350.0, 260.0));
+        // The bottom edge.
+        desk.stroke((200.0, 260.0), &[(0.0, 300.0)], none);
+        assert_eq!(desk.bounds(id), Rect::new(40.0, 120.0, 350.0, 300.0));
+        // Each was one step, and the node is still the only thing there.
+        for _ in 0..4 {
+            assert!(desk.history.undo());
+        }
+        assert_eq!(desk.bounds(id), Rect::new(100.0, 100.0, 300.0, 200.0));
+        assert_eq!(desk.children(desk.page), [id]);
+    }
+
+    #[test]
+    fn shift_keeps_proportions_and_alt_resizes_about_the_middle() {
+        let (shift, alt) = (Keys { shift: true, alt: false }, Keys { shift: false, alt: true });
+        // 200 × 100, corner dragged to make it 300 wide: 150 high to match.
+        let (mut desk, id) = with_rectangle();
+        desk.stroke((300.0, 200.0), &[(400.0, 210.0)], shift);
+        assert_eq!(desk.bounds(id), Rect::new(100.0, 100.0, 400.0, 250.0));
+        // An edge with Shift grows the other direction about the middle.
+        let (mut desk, id) = with_rectangle();
+        desk.stroke((300.0, 150.0), &[(500.0, 150.0)], shift);
+        assert_eq!(desk.bounds(id), Rect::new(100.0, 50.0, 500.0, 250.0));
+        // Alt: the far side moves as much the other way.
+        let (mut desk, id) = with_rectangle();
+        desk.stroke((300.0, 200.0), &[(310.0, 220.0)], alt);
+        assert_eq!(desk.bounds(id), Rect::new(90.0, 80.0, 310.0, 220.0));
+        let (mut desk, id) = with_rectangle();
+        desk.stroke((100.0, 150.0), &[(120.0, 150.0)], alt);
+        assert_eq!(desk.bounds(id), Rect::new(120.0, 100.0, 280.0, 200.0));
+    }
+
+    #[test]
+    fn a_handle_dragged_past_the_far_side_turns_the_box_round() {
+        let (mut desk, id) = with_rectangle();
+        desk.stroke((300.0, 200.0), &[(60.0, 70.0)], Keys::default());
+        assert_eq!(desk.bounds(id), Rect::new(60.0, 70.0, 100.0, 100.0));
+        let size = desk.history.document().node(id).unwrap().size;
+        assert!(size.width > 0.0 && size.height > 0.0);
+    }
+
+    #[test]
+    fn a_turned_node_resizes_along_its_own_sides() {
+        let (mut desk, id) = with_rectangle();
+        // A quarter turn about its top-left corner: its width now runs down the page.
+        desk.history
+            .edit("Turn", |document| {
+                document.node_mut(id)?.transform = Affine::translate((100.0, 100.0)) * Affine::rotate(std::f64::consts::FRAC_PI_2);
+                Ok(())
+            })
+            .unwrap();
+        // Its "right" edge is the bottom one on the page, from (0, 300) to (100, 300).
+        let turned = desk.bounds(id);
+        assert!((turned.x1 - 100.0).abs() < 1e-9 && turned.y1 == 300.0, "{turned:?}");
+        desk.stroke((50.0, 300.0), &[(50.0, 350.0)], Keys::default());
+        let node = desk.history.document().node(id).unwrap();
+        assert!((node.size.width - 250.0).abs() < 1e-9 && (node.size.height - 100.0).abs() < 1e-9, "{:?}", node.size);
+        let bounds = desk.bounds(id);
+        assert!((bounds.y1 - 350.0).abs() < 1e-9 && (bounds.x0 - 0.0).abs() < 1e-9, "{bounds:?}");
+    }
+
+    #[test]
+    fn handles_need_one_unlocked_selected_node_and_esc_puts_a_resize_back() {
+        let (mut desk, id) = with_rectangle();
+        // Out of reach of the corner: a plain click on nothing.
+        desk.stroke((310.0, 210.0), &[(350.0, 260.0)], Keys::default());
+        assert!(desk.tools.selection.is_empty());
+        assert_eq!(desk.bounds(id), Rect::new(100.0, 100.0, 300.0, 200.0));
+        // Not selected: the same drag from the corner moves it instead.
+        desk.stroke((299.0, 199.0), &[(309.0, 209.0)], Keys::default());
+        assert_eq!(desk.bounds(id), Rect::new(110.0, 110.0, 310.0, 210.0));
+        // Selected now; Esc in the middle of a resize.
+        desk.tools.press(&desk.history, desk.page, (310.0, 210.0).into(), Keys::default());
+        desk.tools.drag(&mut desk.history, (400.0, 400.0).into(), Keys::default()).unwrap();
+        assert_eq!(desk.bounds(id).x1, 400.0);
+        desk.tools.cancel(&mut desk.history);
+        assert_eq!(desk.bounds(id), Rect::new(110.0, 110.0, 310.0, 210.0));
+        assert_eq!(desk.history.undo_name(), Some("Move"));
+    }
+
+    #[test]
+    fn arrows_nudge_the_selection_on_the_page() {
+        let mut desk = Desk::new();
+        let frame = desk.draw(Tool::Frame, (100.0, 100.0), (500.0, 400.0));
+        let dot = desk.draw(Tool::Ellipse, (200.0, 200.0), (240.0, 240.0));
+        // The frame turned upside down: right on the page is still right.
+        desk.history
+            .edit("Turn", |document| {
+                document.node_mut(frame)?.transform = Affine::translate((500.0, 400.0)) * Affine::rotate(std::f64::consts::PI);
+                Ok(())
+            })
+            .unwrap();
+        let before = desk.bounds(dot).center();
+        desk.tools.selection = vec![dot];
+        desk.tools.nudge(&mut desk.history, Vec2::new(10.0, 0.0)).unwrap();
+        desk.tools.nudge(&mut desk.history, Vec2::new(0.0, -1.0)).unwrap();
+        assert!((desk.bounds(dot).center() - before - Vec2::new(10.0, -1.0)).hypot() < 1e-9);
+        assert_eq!(desk.history.undo_name(), Some("Nudge"));
+        // With nothing selected there is nothing to undo.
+        let mut empty = Desk::new();
+        empty.tools.nudge(&mut empty.history, Vec2::new(1.0, 0.0)).unwrap();
+        assert_eq!(empty.history.undo_name(), None);
     }
 
     #[test]

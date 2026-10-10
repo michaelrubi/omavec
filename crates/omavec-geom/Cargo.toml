@@ -7,6 +7,7 @@ description = "Omavec's curve maths: vector networks, booleans, offsets, stroke 
 
 [dependencies]
 kurbo = { version = "0.13.1", features = ["serde"] }
+serde = { version = "1.0.229", features = ["derive"] }
 # Booleans, Shape Builder regions, offset, outline stroke and simplify. Pinned
 # to a commit and bumped on purpose; see docs/ROADMAP.md, "Borrowing from
 # VectorCraft".

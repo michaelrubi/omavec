@@ -250,7 +250,9 @@ reopen and export.
   Star, Line (L) and Arrow (Shift+L) by dragging: a square or circle with
   Shift, from the middle with Alt, 100 × 100 on a click; a line to the
   nearest 45° with Shift; a shape started over a frame goes into it; the
-  tool hands back to Move (V). A line is reshaped by dragging either end.
+  tool hands back to Move (V). What a tool draws is named and numbered as
+  in Figma ("Frame 1", "Rectangle 2"). A line is reshaped by dragging
+  either end.
   The Design panel has a frame's or rectangle's corner radius and whether
   a frame clips, an ellipse's start, sweep and ratio (which make it a pie
   slice or a ring), a polygon's count, and a star's count and ratio. The
@@ -331,10 +333,12 @@ reopen and export.
   a PNG if it has none. `omavec export file.omavec --frame Logo --format
   svg,png@2x --out dist/` does the same with no window: every frame if
   none is named, each frame's own settings if no format is.
-  Later: a stroke or shadow outside a node's box is cut off, since the
-  picture is the size of the box; a suffix for each setting; layer names
-  as ids in the SVG; `--node` in the CLI for something that isn't a
-  top-level frame.
+  A frame is exported as its box; anything else as all that it paints,
+  so a stroke outside the shape, an arrowhead, or a line (whose box has no
+  height) comes out whole. Two nodes of one name are two files, the
+  second `Name-2`.
+  Later: a suffix for each setting; layer names as ids in the SVG;
+  `--node` in the CLI for something that isn't a top-level frame.
 - ~~`OMAVEC_SCRIPT` replay and the egui `Harness` for UI tests.~~ (done)
   A script is steps between commas: any `Command` by name, a tool and
   where to drag it (`Rectangle 20 20 100 80`, `Line 0 0 30 40`), `Click`

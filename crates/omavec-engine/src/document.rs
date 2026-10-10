@@ -262,6 +262,16 @@ impl Document {
         Node { id, name: kind.label().into(), visible: true, locked: false, opacity: 1.0, blend: Blend::Normal, transform: Affine::IDENTITY, size, radii: [0.0; 4], fills: kind.fills(), stroke: kind.stroke(), exports: Vec::new(), kind, children: Vec::new() }
     }
 
+    /// A name for a new node of `kind` that no node has yet, as Figma
+    /// numbers them: "Frame 1", then "Frame 2".
+    pub fn name_for(&self, kind: &NodeKind) -> String {
+        fn highest(nodes: &[Arc<Node>], label: &str) -> u32 {
+            let number = |node: &Node| node.name.strip_prefix(label).and_then(|rest| rest.trim_start().parse::<u32>().ok()).unwrap_or(0);
+            nodes.iter().map(|node| number(node).max(highest(&node.children, label))).max().unwrap_or(0)
+        }
+        format!("{} {}", kind.label(), highest(&self.pages, kind.label()) + 1)
+    }
+
     /// A copy of `node` and everything in it, with ids of their own.
     pub fn copy_of(&mut self, node: &Node) -> Node {
         let mut copy = node.clone();

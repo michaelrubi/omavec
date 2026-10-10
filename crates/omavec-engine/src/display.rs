@@ -52,7 +52,41 @@ pub struct DisplayList {
     pub items: Vec<Item>,
 }
 
+/// The part of `node`'s own coordinates that an export of it shows. A
+/// frame is exported as its box, as in Figma; anything else as all that it
+/// paints, strokes and arrowheads included, out to whole units, so a line,
+/// whose box has no height, still makes a picture.
+pub fn export_area(node: &Node) -> Rect {
+    if matches!(node.kind, NodeKind::Frame { .. }) {
+        return node.bounds();
+    }
+    // As it paints with no transform of its own: upright, at its origin.
+    let mut upright = node.clone();
+    upright.transform = Affine::IDENTITY;
+    DisplayList::of(&upright).painted().map_or(node.bounds(), |painted| painted.union(node.bounds()).expand())
+}
+
 impl DisplayList {
+    /// The box round everything the list paints, less what its clips cut
+    /// off; `None` if it paints nothing.
+    pub fn painted(&self) -> Option<Rect> {
+        let (mut clips, mut area): (Vec<Rect>, Option<Rect>) = (Vec::new(), None);
+        for item in &self.items {
+            match item {
+                Item::Clip(path) => clips.push(path.bounding_box()),
+                Item::Unclip => drop(clips.pop()),
+                Item::Fill(fill) => {
+                    let shown = clips.iter().fold(fill.bounds(), |shown, clip| shown.intersect(*clip));
+                    if shown.width() > 0.0 && shown.height() > 0.0 {
+                        area = Some(area.map_or(shown, |area| area.union(shown)));
+                    }
+                }
+                Item::Fade(..) | Item::Unfade => {}
+            }
+        }
+        area
+    }
+
     /// Everything visible on `page`.
     pub fn of(page: &Node) -> Self {
         let mut list = Self::default();

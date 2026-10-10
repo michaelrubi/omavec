@@ -41,6 +41,7 @@ impl Tool {
     /// A new node of the tool's kind, not yet in the tree or of any size.
     fn node(self, document: &mut Document) -> Option<Node> {
         let mut node = document.create(self.draws()?, Size::ZERO);
+        node.name = document.name_for(&node.kind);
         if self == Tool::Arrow {
             node.stroke.end_cap = Cap::Arrow;
         }

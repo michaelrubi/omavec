@@ -84,9 +84,9 @@ fn spec_document_matches_exact_svg() {
 fn export_group_by_id_sizes_to_group_without_parent_transform_or_opacity() {
     let (document, _, group_id) = build_spec_document();
     // A group is as big as what is in it, hidden or not, whatever size it
-    // was made with: 0..50.5 by 0..20.25.
+    // was made with: 0..50.5 by 0..20.25, out to whole units for a picture.
     let expected = "\
-<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"50.5\" height=\"20.25\" viewBox=\"0 0 50.5 20.25\">
+<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"51\" height=\"21\" viewBox=\"0 0 51 21\">
   <rect width=\"20\" height=\"20\" fill=\"#0000ff\"/>
 </svg>
 ";
@@ -263,4 +263,33 @@ fn shapes_are_the_plainest_element_that_says_them() {
     assert_eq!(lines[5], r##"<path d="M0 0L60 0" transform="translate(100 80)" fill="none" stroke="#000000" stroke-width="4" stroke-linecap="round"/>"##);
     assert!(lines[6].starts_with(r#"<path d="M"#) && lines[6].ends_with(r##"Z" transform="translate(100 120)" fill="#000000"/>"##), "{}", lines[6]);
     assert_eq!(lines.len(), 8);
+}
+
+#[test]
+fn a_picture_is_as_big_as_what_the_node_paints() {
+    use omavec_engine::{Align, Cap, Stroke};
+    let mut document = Document::default();
+    let page = document.pages[0].id;
+    let mut line = document.create(NodeKind::Line, Size::new(100.0, 0.0));
+    line.transform = Affine::translate((300.0, 300.0)) * Affine::rotate(1.0);
+    line.stroke.weight = 6.0;
+    let line_id = line.id;
+    document.insert(page, 0, line).unwrap();
+    // A line's box has no height, but its stroke has: three either side.
+    // It is exported upright, wherever and however it lies on the page.
+    let svg = svg::write(&document, line_id).unwrap();
+    assert!(svg.starts_with(r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="6" viewBox="0 -3 100 6">"#), "{svg}");
+    // Round ends reach three past each end as well.
+    let stroke = &mut document.node_mut(line_id).unwrap().stroke;
+    (stroke.start_cap, stroke.end_cap) = (Cap::Round, Cap::Round);
+    assert!(svg::write(&document, line_id).unwrap().contains(r#"viewBox="-3 -3 106 6""#));
+    // A rectangle with a stroke outside it is that much bigger all round;
+    // a frame is its box whatever it paints, as in Figma.
+    let mut rectangle = document.create(NodeKind::Rectangle, Size::new(40.0, 20.0));
+    rectangle.stroke = Stroke { paints: vec![Paint::solid(Color::rgb(0, 0, 0))], weight: 2.5, align: Align::Outside, ..Default::default() };
+    let rectangle_id = rectangle.id;
+    document.insert(page, 1, rectangle).unwrap();
+    assert!(svg::write(&document, rectangle_id).unwrap().contains(r#"width="46" height="26" viewBox="-3 -3 46 26""#));
+    document.node_mut(rectangle_id).unwrap().kind = NodeKind::Frame { clip: false };
+    assert!(svg::write(&document, rectangle_id).unwrap().contains(r#"width="40" height="20" viewBox="0 0 40 20""#));
 }

@@ -108,6 +108,7 @@ impl Document {
         }
         let area = members.iter().map(|node| node.transform.transform_rect_bbox(node.bounds())).reduce(|a, b| a.union(b)).unwrap_or_default();
         let mut group = self.create(kind, area.size());
+        group.name = self.name_for(&group.kind);
         group.fills.clear();
         group.transform = Affine::translate(area.origin().to_vec2());
         for node in &mut members {

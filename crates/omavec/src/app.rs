@@ -1145,18 +1145,18 @@ mod tests {
         };
         // The selection, as a PNG since it says nothing else.
         app.export_to(&folder.join("one"));
-        assert_eq!(names(&folder.join("one")), ["Ellipse.png"]);
+        assert_eq!(names(&folder.join("one")), ["Ellipse 1.png"]);
         assert_eq!(app.status, Some((format!("Exported 1 file into {}", folder.join("one").display()), false)));
         // As its own settings say, once it has some.
         app.history.edit("Export Settings", |document| document.node_mut(ellipse).map(|node| node.exports = vec![Export::Svg, Export::Png { scale: 2.0 }])).unwrap();
         app.export_to(&folder.join("two"));
-        assert_eq!(names(&folder.join("two")), ["Ellipse.svg", "Ellipse@2x.png"]);
-        let svg = std::fs::read_to_string(folder.join("two/Ellipse.svg")).unwrap();
+        assert_eq!(names(&folder.join("two")), ["Ellipse 1.svg", "Ellipse 1@2x.png"]);
+        let svg = std::fs::read_to_string(folder.join("two/Ellipse 1.svg")).unwrap();
         assert!(svg.contains(r#"width="60" height="40""#) && svg.contains("<ellipse"), "{svg}");
         // With nothing selected, every frame on the page.
         app.tools.selection.clear();
         app.export_to(&folder.join("all"));
-        assert_eq!(names(&folder.join("all")), ["Frame.png"]);
+        assert_eq!(names(&folder.join("all")), ["Frame 1.png"]);
         let _ = std::fs::remove_dir_all(folder);
     }
 
@@ -1272,9 +1272,26 @@ mod tests {
                 (NodeKind::Line, Rect::new(10.0, 250.0, 110.0, 250.0)),
             ]
         );
+        // What a tool draws is numbered, so no two are called the same.
+        assert_eq!(frame.children.iter().map(|node| node.name.as_str()).collect::<Vec<_>>(), ["Rectangle 1", "Rectangle 1", "Ellipse 1", "Line 1"]);
         // Nothing was selected when it exported: the frame.
-        assert!(out.join("Frame.png").exists());
+        assert!(out.join("Frame 1.png").exists());
         assert_eq!(&file::open(&folder.join("Made.omavec")).unwrap(), document);
+        // A second frame is a second file; and so are two nodes of one
+        // name, as a node and its copy are.
+        app.step(Step::Draw(Command::FrameTool, Point::new(500.0, 0.0), Point::new(600.0, 80.0)), &ctx);
+        app.step(Step::Click(Point::new(900.0, 900.0)), &ctx);
+        app.step(Step::Export(folder.join("both")), &ctx);
+        app.step(Step::Click(Point::new(60.0, 60.0)), &ctx);
+        app.step(Step::Run(Command::SelectAll), &ctx);
+        app.step(Step::Export(folder.join("each")), &ctx);
+        let names = |folder: &Path| {
+            let mut names: Vec<String> = std::fs::read_dir(folder).unwrap().map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned()).collect();
+            names.sort();
+            names
+        };
+        assert_eq!(names(&folder.join("both")), ["Frame 1.png", "Frame 2.png"]);
+        assert_eq!(names(&folder.join("each")), ["Ellipse 1.png", "Line 1.png", "Rectangle 1-2.png", "Rectangle 1.png"]);
         // Quit in a script doesn't stop to ask.
         app.step(Step::Run(Command::ArrowTool), &ctx);
         app.step(Step::Draw(Command::RectangleTool, Point::new(500.0, 0.0), Point::new(520.0, 20.0)), &ctx);
@@ -1293,13 +1310,13 @@ mod tests {
         // On a document that is there already; nothing after Quit happens.
         App::run_script(&format!("Ellipse 5 5 20 20,Export {}", folder.join("out").display()), Some(&made)).unwrap();
         // What was drawn last is selected, so that is what Export exports.
-        assert!(folder.join("out/Ellipse.png").exists());
+        assert!(folder.join("out/Ellipse 1.png").exists());
         assert_eq!(file::open(&made).unwrap().pages[0].children[0].children.len(), 0, "the ellipse was never saved");
         // Whatever would ask in a window says so instead.
         assert_eq!(App::run_script("SaveAs", None), Err("Save As… needs a path here: there is no window to ask in".into()));
         assert_eq!(App::run_script("Explode", None), Err("\"Explode\" is not a step".into()));
         assert!(App::run_script("Undo", Some(&folder.join("nowhere.omavecz"))).unwrap_err().starts_with("Couldn't open"));
-        assert!(App::run_script(&format!("Rectangle 0 0 10 10,Save {},Undo", folder.join("out/Ellipse.png/x.omavecz").display()), None).unwrap_err().starts_with("Couldn't save"));
+        assert!(App::run_script(&format!("Rectangle 0 0 10 10,Save {},Undo", folder.join("out/Ellipse 1.png/x.omavecz").display()), None).unwrap_err().starts_with("Couldn't save"));
         let _ = std::fs::remove_dir_all(folder);
     }
 

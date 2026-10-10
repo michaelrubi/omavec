@@ -293,11 +293,13 @@ fn write_inside(node: &Node, indent: usize, clipped: bool, out: &mut String) {
     }
 }
 
-/// `id` and everything in it as an SVG document, sized to the node's box.
+/// `id` and everything in it as an SVG document, the size of what an
+/// export of it shows (see [`crate::display::export_area`]).
 pub fn write(document: &Document, id: NodeId) -> Result<String, Error> {
     let node = document.node(id).ok_or(Error::NoSuchNode(id))?;
-    // A group's box needn't start at its origin.
-    let area = node.bounds();
+    // Its box, or all it paints if that is more; neither need start at
+    // its origin.
+    let area = crate::display::export_area(node);
     let corner = if area.origin() == Point::ZERO { "0 0".into() } else { format!("{} {}", num(area.x0), num(area.y0)) };
     let (width, height) = (num(area.width()), num(area.height()));
     let mut out = format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"{corner} {width} {height}\">\n");

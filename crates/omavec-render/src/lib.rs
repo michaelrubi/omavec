@@ -1,37 +1,17 @@
 //! Draws a display list with `vello_cpu`: on a worker thread for the canvas,
 //! and directly for headless export and golden-image tests. It is one
 //! renderer for all three, so an export is what the canvas showed.
+// Shipped code returns errors; only tests may panic.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 pub mod spike;
 
+pub use omavec_engine::display::{DisplayList, Item};
 pub use peniko;
 
-use kurbo::{Affine, BezPath, Rect, Shape};
+use kurbo::{Affine, Rect};
 use peniko::{Color, ImageAlphaType};
 use vello_cpu::{Pixmap, RenderContext, Resources};
-
-/// One filled path, in document units.
-pub struct Item {
-    pub path: BezPath,
-    pub color: Color,
-    bounds: Rect,
-}
-
-impl Item {
-    pub fn new(path: BezPath, color: Color) -> Self {
-        Self { bounds: path.bounding_box(), path, color }
-    }
-
-    pub fn bounds(&self) -> Rect {
-        self.bounds
-    }
-}
-
-/// What to draw, back to front.
-#[derive(Default)]
-pub struct DisplayList {
-    pub items: Vec<Item>,
-}
 
 /// A drawn frame: premultiplied RGBA8, top row first.
 pub struct Frame {
@@ -64,7 +44,7 @@ impl Renderer {
         for item in &list.items {
             // vello_cpu keeps no scene between frames, so every path it's
             // given is processed again: skip the ones off screen.
-            if view.transform_rect_bbox(item.bounds).intersect(screen).is_zero_area() {
+            if view.transform_rect_bbox(item.bounds()).intersect(screen).is_zero_area() {
                 continue;
             }
             self.context.set_paint(item.color);
@@ -80,6 +60,7 @@ impl Renderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kurbo::Shape;
 
     fn pixel(frame: &Frame, x: usize, y: usize) -> [u8; 4] {
         let at = (y * usize::from(frame.width) + x) * 4;
@@ -107,6 +88,30 @@ mod tests {
         assert_eq!(pixel(&frame, 22, 36), [40, 40, 40, 255]);
         assert_eq!(pixel(&frame, 34, 24), [40, 40, 40, 255]);
         assert_eq!(pixel(&frame, 45, 47), [40, 40, 40, 255]);
+    }
+
+    #[test]
+    fn a_document_is_drawn_as_its_nodes_are_laid_out() {
+        use omavec_engine::{Document, NodeKind};
+        // A white frame at (10, 10), with Figma's grey ellipse filling its
+        // right half.
+        let mut document = Document::default();
+        let page = document.pages[0].id;
+        let mut frame = document.create(NodeKind::Frame { clip: true }, (40.0, 20.0).into());
+        frame.transform = Affine::translate((10.0, 10.0));
+        let frame_id = frame.id;
+        document.insert(page, 0, frame).unwrap();
+        let mut ellipse = document.create(NodeKind::Ellipse, (20.0, 20.0).into());
+        ellipse.transform = Affine::translate((20.0, 0.0));
+        document.insert(frame_id, 0, ellipse).unwrap();
+
+        let list = DisplayList::of(&document.pages[0]);
+        let frame = Renderer::default().render(&list, Affine::IDENTITY, 64, 40, Color::from_rgb8(40, 40, 40));
+        assert_eq!(pixel(&frame, 5, 20), [40, 40, 40, 255], "the backdrop");
+        assert_eq!(pixel(&frame, 20, 20), [255, 255, 255, 255], "the frame");
+        assert_eq!(pixel(&frame, 40, 20), [0xd9, 0xd9, 0xd9, 255], "the middle of the ellipse");
+        assert_eq!(pixel(&frame, 31, 11), [255, 255, 255, 255], "the frame, in the corner of the ellipse's box");
+        assert_eq!(pixel(&frame, 55, 20), [40, 40, 40, 255], "past the frame");
     }
 
     #[test]

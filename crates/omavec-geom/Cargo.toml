@@ -6,7 +6,7 @@ license.workspace = true
 description = "Omavec's curve maths: vector networks, booleans, offsets, stroke expansion and warps"
 
 [dependencies]
-kurbo = "0.13.1"
+kurbo = { version = "0.13.1", features = ["serde"] }
 # Booleans, Shape Builder regions, offset, outline stroke and simplify. Pinned
 # to a commit and bumped on purpose; see docs/ROADMAP.md, "Borrowing from
 # VectorCraft".

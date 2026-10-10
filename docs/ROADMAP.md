@@ -5,11 +5,10 @@ the architecture; [DECISIONS.md](DECISIONS.md) records why. As in Omapix,
 finished items are ~~struck through~~ with "(done)", and anything deferred
 goes on a "Later:" line under the item.
 
-Status: Phase 0 under way. The workspace, the app shell and the canvas
-exist, and all six spikes are done with their numbers in DESIGN.md,
-"Phase 0 findings". What's left of Phase 0 is Michael's: try the shell
-from the installed binary, and decide the first two "Still open" items in
-DECISIONS.md.
+Status: Phase 0 is done bar Michael trying the shell by hand. Phase 1 is
+under way: you can draw frames, rectangles and ellipses, select, move and
+delete them, undo and redo, and save and reopen the document. Nothing can
+be styled, resized or exported yet.
 
 ## Borrowing from VectorCraft
 
@@ -79,8 +78,8 @@ go into DESIGN.md.
   `vectorcraft-pathops`, pinned to one commit, with one kurbo (0.13.1) in
   the tree. `NOTICE` carries VectorCraft's copyright and licence. CI is a
   GitHub Actions workflow.
-  Later: a MIME type for `.omavec` in the `.desktop` file, once the format
-  is decided (folder or single file).
+  Later: a MIME type for `.omavecz` in the `.desktop` file, when Phase 1
+  can open one.
 - ~~App shell: an eframe window with the Omarchy theme (ported `theme.rs`),
   a menu bar, empty left (layers) and right (properties) panels, and the
   canvas in the middle.~~ (done) The theme follows Omarchy live. The first
@@ -151,8 +150,12 @@ go into DESIGN.md.
   prints a tree, or the whole message with `--json`.
   Later: add two or three of Michael's own files to
   `crates/omavec-fig/tests/fixtures/` before Phase 7.
-- Decide the first two "Still open" items in DECISIONS.md, and item 5
-  (VectorCraft as a git dependency or vendored).
+- ~~Decide the first two "Still open" items in DECISIONS.md, and item 5
+  (VectorCraft as a git dependency or vendored).~~ (done) Figma's letters
+  win, with a command palette, a `:` command line and hjkl nudging as an
+  off-by-default setting; the `.omavec` folder is canonical, with a zipped
+  `.omavecz` for sending and for file managers; VectorCraft is a pinned
+  git dependency.
 
 Exit: the shell runs from `make install` in the Omarchy theme, and every
 spike has numbers and a decision written down.
@@ -162,32 +165,66 @@ spike has numbers and a decision written down.
 The editor skeleton: a document you can draw simple shapes in, save,
 reopen and export.
 
-- Engine: node tree with stable ids, `Arc` copy-on-write snapshots, undo
+- ~~Engine: node tree with stable ids, `Arc` copy-on-write snapshots, undo
   and redo, the `Command` enum, dirty tracking. Shipped code returns
   errors instead of panicking, as VectorCraft enforces with clippy lints
-  (`unwrap_used`, `expect_used`, `panic` denied outside tests).
+  (`unwrap_used`, `expect_used`, `panic` denied outside tests).~~ (done)
+  `omavec_engine::Document` is pages of nodes behind `Arc`s; an edit
+  copies only the path to the node it changes. `History` makes each edit
+  one undo step, folds a drag's edits into one (`begin` / `commit` /
+  `cancel`), and knows whether the document differs from what was saved.
+  A random-session test checks it against a plain list of whole
+  documents. All five crates deny the three lints outside tests.
+  Later: an index from id to node, when a linear search per edit shows up
+  in a profile; a cap on the number of undo steps.
 - `.omavec` folder format: deterministic JSON, format version, assets by
-  hash. Save, open, recent files, autosave and crash recovery.
+  hash. Save, open, recent files, autosave and crash recovery. Then
+  `.omavecz`, the same folder zipped, with its MIME type.
+  Built so far: `omavec_engine::file` writes `document.json` and a file
+  per page, rewrites only what changed, removes deleted pages' files and
+  leaves the rest of the folder alone; opening refuses a newer format and
+  names what is wrong with a damaged or badly merged folder. New
+  (Ctrl+N), Open (Ctrl+O), Save (Ctrl+S) and Save As (Ctrl+Shift+S) in
+  the app, `omavec logo.omavec` from a terminal, and a dot in the title
+  while there are unsaved changes. Left: assets, recent files, autosave
+  and crash recovery, asking before unsaved changes are thrown away, and
+  `.omavecz`.
 - Canvas: pan (Space/H/middle drag), zoom (Ctrl+wheel, Shift+0/1/2, pinch),
   pixel grid at high zoom, rulers. Phase 0 already built wheel, middle
   drag and Space+drag panning, Ctrl+wheel and pinch zoom about the
-  pointer, and Ctrl+= / Ctrl+- / Shift+0; the Hand tool, zoom to fit and
-  to selection, the grid and rulers are left.
+  pointer, and Ctrl+= / Ctrl+- / Shift+0. The pixel grid (Shift+', from
+  400%) and rulers (Shift+R) are built; the Hand tool and zoom to fit and
+  to selection are left.
 - Selection: click, Shift+click, marquee, deep select (Ctrl+click), select
-  in group (double-click / Enter), Esc to parent.
-- Tools as in `vectorcraft-tools`: pointer events in, Begin/Preview/Commit
+  in group (double-click / Enter), Esc to parent. Built so far: click
+  (the page's child, or what is inside a top-level frame), Shift+click to
+  add or take away, a click on nothing to clear, and an outline round
+  what is selected. Hidden and locked nodes can't be clicked.
+- ~~Tools as in `vectorcraft-tools`: pointer events in, Begin/Preview/Commit
   actions out, so every drag is one undo step and every tool is testable
-  without a window.
+  without a window.~~ (done) `crates/omavec/src/tools.rs` takes presses,
+  drags and releases in page coordinates and edits through `History`; its
+  tests never open a window.
 - Transform: move, resize and rotate handles; Shift/Alt modifiers; nudge
   with arrows (Shift: 10); numeric X/Y/W/H/rotation in the properties panel.
+  Built so far: dragging the selection moves it, as one undo step, also
+  inside rotated or scaled frames; Esc puts it back; Delete removes it.
 - Tools: Frame (artboards = top-level frames, with Figma's device presets),
   Rectangle (per-corner radii), Ellipse (arc/ratio), Polygon, Star, Line,
-  Arrow.
+  Arrow. Built so far: Frame (F), Rectangle (R) and Ellipse (O) by
+  dragging, a square or circle with Shift, from the middle with Alt, 100 ×
+  100 on a click; a shape started over a frame goes into it; the tool
+  hands back to Move (V). Left: presets, radii, arcs, and the other four.
 - Paint: solid fills and strokes, multiple fills, opacity, blend modes;
   linear/radial/angular/diamond gradients with on-canvas handles; the
-  colour picker with eyedropper.
+  colour picker with eyedropper. Built so far: a stack of solid fills per
+  node with opacity and visibility, Figma's defaults (grey shapes, white
+  frames), drawn by the canvas. Nothing in the UI changes them yet.
+  Later: a node's opacity as a layer, not multiplied into its children;
+  frames that clip what they draw (hit testing already respects it).
 - Panels: layers (tree, rename, reorder by drag, hide, lock, multi-select),
-  properties (Figma's right panel layout).
+  properties (Figma's right panel layout). Built so far: the layers list,
+  front-most first, where a click selects.
 - Smart guides and snapping: edges, centres, equal spacing, pixel grid.
 - Group (Ctrl+G), frame selection (Ctrl+Alt+G), duplicate (Ctrl+D,
   Alt+drag), copy/paste within Omavec and as SVG to the Wayland clipboard.
@@ -195,6 +232,8 @@ reopen and export.
   CLI; `vello_cpu` for headless PNG. `vectorcraft-svg`'s writer is the
   reference for the SVG side.
 - `OMAVEC_SCRIPT` replay and the egui `Harness` for UI tests.
+- Command palette (Ctrl+K, Ctrl+/) listing every `Command`, and `:` to
+  open it as a command line.
 
 Exit: draw a few shapes in two frames, style them, save, reopen, undo
 through the session, and export the frames as SVG and PNG from the app and

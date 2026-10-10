@@ -9,7 +9,7 @@ app.
 
 It is an independent project, not part of Omarchy.
 
-Status: Phase 0 (foundations and spikes). The decisions behind this document are in
+Status: Phase 1 (document core and canvas). The decisions behind this document are in
 [DECISIONS.md](DECISIONS.md); the order of work is in
 [ROADMAP.md](ROADMAP.md).
 
@@ -213,25 +213,55 @@ Documents are trees of `Arc` nodes with copy-on-write, so an undo snapshot
 shares every unchanged node (the same idea as Omapix's tiles). Each command
 is one undo step; dragging coalesces into one step on release.
 
+`History` holds the document. `edit` makes one change as one step, and
+leaves no trace if the change fails. A tool calls `begin` when a drag
+starts, edits as often as the pointer moves, and `commit`s on release or
+`cancel`s on Esc. Every change gets a new revision number and an undo
+brings the old number back, so the canvas redraws when the number changes
+and the document is "dirty" when it isn't the number that was saved.
+
 ### Files
 
 A document is a folder:
 
 ```
 logo.omavec/
-  document.json        format version, pages list, variables, styles
+  document.json        format version, the pages in order, the next node id
   pages/
-    01-cover.json      node tree for one page, pretty-printed, keys sorted
+    01-cover.json      node tree for one page, pretty-printed
   assets/
     3f9a…c2.png        images by content hash (shared across pages)
   thumbnail.png        for file pickers
 ```
 
+A node in a page file, with whatever has its usual value left out (shown,
+unlocked, opaque, not transformed, no children), so a diff shows only what
+someone changed:
+
+```json
+{
+  "id": 3,
+  "type": "rectangle",
+  "name": "Rectangle",
+  "transform": [1.0, 0.0, 0.0, 1.0, 20.0, 40.0],
+  "size": { "width": 100.0, "height": 50.0 },
+  "fills": [{ "type": "solid", "color": "#d9d9d9" }]
+}
+```
+
+(The real files put each number on its own line.) Saving rewrites only
+the files whose contents changed, removes the files of pages that were
+deleted or renamed, and touches nothing else in the folder. Opening
+refuses a format newer than it knows, and says which file and what is
+wrong when a folder is damaged or a merge has left two nodes with one id.
+Variables, styles, assets and the thumbnail aren't written yet.
+
 - Text formatting is deterministic (sorted keys, fixed float formatting),
   so saving an unchanged document changes nothing in git.
 - Fonts are referenced by family/style, not embedded.
-- A zipped single-file form (`.omavecz`) is planned for sending files to
-  people (see [DECISIONS.md](DECISIONS.md), "Still open").
+- A `.omavecz` is the same folder zipped, for sending files to people and
+  for opening from a file manager. Omavec opens and saves both; the folder
+  is the one to keep in git.
 
 ### Import and export
 
@@ -275,9 +305,10 @@ window and no GPU.
   torn off into their own windows (egui viewports), so Hyprland can tile
   them. Tablet pressure through the Wayland tablet protocol, ported from
   Omapix's `tablet.rs`, for the pencil and width tools.
-- **Keyboard first**: Figma shortcuts, a command palette that lists every
-  `Command`, and Vim-style keys where they don't fight Figma (see
-  [DECISIONS.md](DECISIONS.md), "Still open").
+- **Keyboard first**: Figma shortcuts; a command palette that lists every
+  `Command` (Ctrl+K, Ctrl+/); `:` to open it as a command line that takes
+  arguments; and hjkl nudging as a setting, off by default, because H, K
+  and L are Figma's Hand, Scale and Line.
 - **Install**: `make install` to `~/.local`, plus an AUR `PKGBUILD`, a
   `.desktop` file with a MIME type for `.omavec`, and an icon.
 
@@ -302,6 +333,10 @@ Figma's defaults, plus Illustrator's letters for the tools Figma lacks.
 | Shift+1 / Shift+2 | Zoom to fit / selection | Ctrl+K, Ctrl+/ | Command palette |
 | Ctrl+= / Ctrl+- | Zoom in / out | Shift+0 | Zoom to 100% |
 | Ctrl+\ | Show/hide UI | Ctrl+Q | Quit |
+| Ctrl+Z / Ctrl+Shift+Z | Undo / redo | Delete, Backspace | Delete |
+| Ctrl+N / Ctrl+O | New / open | Ctrl+S / Ctrl+Shift+S | Save / save as |
+| Esc | Give up the drag, then the tool | | |
+| Shift+R | Rulers | Shift+' | Pixel grid |
 
 On the canvas: the wheel pans, Ctrl+wheel or a pinch zooms about the
 pointer, and middle drag or Space+drag pans.

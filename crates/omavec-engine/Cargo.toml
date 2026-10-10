@@ -7,3 +7,12 @@ description = "Omavec's document: node tree, layout, text, components, undo and 
 
 [dependencies]
 omavec-geom = { version = "0.0.1", path = "../omavec-geom" }
+peniko = "0.6.1"
+serde = { version = "1.0.229", features = ["derive", "rc"] }
+# `float_roundtrip`: a number read back is the number that was written, so
+# opening a file and saving it changes nothing.
+serde_json = { version = "1.0.151", features = ["float_roundtrip"] }
+thiserror = "2.0.20"
+
+[dev-dependencies]
+proptest = "1.11.0"

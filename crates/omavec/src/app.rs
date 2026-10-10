@@ -3,7 +3,7 @@ use std::sync::mpsc::{Receiver, channel};
 
 use egui::{Button, RichText, Ui};
 use omavec_engine::display::DisplayList;
-use omavec_engine::{Document, Error, History, NodeId, NodeKind, Stack, file};
+use omavec_engine::{Color, Document, Error, History, NodeId, NodeKind, Paint, PaintKind, Stack, file};
 use omavec_geom::kurbo::{Point, Rect, Vec2};
 
 use crate::canvas::{Canvas, Overlay, Pointer};
@@ -18,7 +18,7 @@ use crate::theme::{self, Theme};
 use crate::tools::{Grab, Keys, Tool, Tools};
 
 /// The tools in the tool bar, with the command that picks each.
-const TOOLS: [(Tool, Command); 9] = [
+const TOOLS: [(Tool, Command); 10] = [
     (Tool::Move, Command::MoveTool),
     (Tool::Hand, Command::HandTool),
     (Tool::Frame, Command::FrameTool),
@@ -28,6 +28,7 @@ const TOOLS: [(Tool, Command); 9] = [
     (Tool::Star, Command::StarTool),
     (Tool::Line, Command::LineTool),
     (Tool::Arrow, Command::ArrowTool),
+    (Tool::Eyedropper, Command::EyedropperTool),
 ];
 
 pub struct App {
@@ -421,7 +422,7 @@ impl App {
                 let nudged = self.tools.nudge(&mut self.history, by);
                 self.check(nudged);
             }
-            Command::MoveTool | Command::HandTool | Command::FrameTool | Command::RectangleTool | Command::EllipseTool | Command::PolygonTool | Command::StarTool | Command::LineTool | Command::ArrowTool => {
+            Command::MoveTool | Command::HandTool | Command::FrameTool | Command::RectangleTool | Command::EllipseTool | Command::PolygonTool | Command::StarTool | Command::LineTool | Command::ArrowTool | Command::EyedropperTool => {
                 if let Some((tool, _)) = TOOLS.iter().find(|(_, picks)| *picks == command) {
                     self.tools.tool = *tool;
                 }
@@ -653,6 +654,27 @@ impl App {
         nodes.iter().filter_map(corners).collect()
     }
 
+    /// The eyedropper: gives the selection the colour the canvas shows at
+    /// `at` as its fill, in place of the top one it has, and hands back to
+    /// the Move tool.
+    fn pick_colour(&mut self, at: Point) {
+        let Some(picked) = self.canvas.sample(at) else { return };
+        let color = Color::rgb(picked.r(), picked.g(), picked.b());
+        let selection = &self.tools.selection;
+        let filled = self.history.edit("Fill", |document| {
+            for id in selection {
+                let fills = &mut document.node_mut(*id)?.fills;
+                match fills.last_mut() {
+                    Some(top) => top.kind = PaintKind::Solid { color },
+                    None => fills.push(Paint::solid(color)),
+                }
+            }
+            Ok(())
+        });
+        self.check(filled);
+        self.tools.tool = Tool::Move;
+    }
+
     /// The pointer to show at `at` on the canvas: what a press there would do.
     /// `corners` are those of the selection's box, on the page.
     fn cursor(&self, at: Point, corners: Option<[Point; 4]>) -> egui::CursorIcon {
@@ -737,6 +759,13 @@ impl App {
         // A handle is taken from six points away, whatever the zoom.
         self.tools.grab = 6.0 / self.canvas.view.zoom;
         for event in pointer {
+            // The eyedropper is the app's own: it has the pixels.
+            if self.tools.tool == Tool::Eyedropper {
+                if let Pointer::Press(at) = event {
+                    self.pick_colour(at);
+                }
+                continue;
+            }
             let done = match event {
                 Pointer::Press(at) => {
                     self.tools.press(&self.history, self.page, at, keys);
@@ -1055,7 +1084,7 @@ mod tests {
     fn every_tool_draws_its_shape_and_the_panels_show_it() {
         let (ctx, mut app, canvas) = app();
         let mut kinds = Vec::new();
-        for (index, (tool, command)) in TOOLS.into_iter().enumerate().skip(2) {
+        for (index, (tool, command)) in TOOLS.into_iter().enumerate().skip(2).take(7) {
             app.run(command, &ctx);
             assert_eq!(app.tools.tool, tool);
             let from = canvas.min + vec2(20.0 + 45.0 * index as f32, 40.0 + 40.0 * (index % 2) as f32);
@@ -1252,6 +1281,39 @@ mod tests {
         assert!(App::run_script("Undo", Some(&folder.join("nowhere.omavecz"))).unwrap_err().starts_with("Couldn't open"));
         assert!(App::run_script(&format!("Rectangle 0 0 10 10,Save {},Undo", folder.join("out/Ellipse.png/x.omavecz").display()), None).unwrap_err().starts_with("Couldn't save"));
         let _ = std::fs::remove_dir_all(folder);
+    }
+
+    #[test]
+    fn the_eyedropper_gives_the_selection_the_colour_under_the_pointer() {
+        let (ctx, mut app, canvas) = app();
+        for (from, to) in [((20.0, 20.0), (120.0, 120.0)), ((200.0, 20.0), (300.0, 120.0))] {
+            frame(&ctx, &mut app, key(Key::R, Modifiers::NONE));
+            drag(&ctx, &mut app, canvas.min + vec2(from.0, from.1), canvas.min + vec2(to.0, to.1));
+        }
+        let [first, second] = app.history.document().node(app.page).unwrap().children.iter().map(|node| node.id).collect::<Vec<_>>()[..] else { panic!() };
+        let red = Color::rgb(230, 57, 70);
+        app.history.edit("Fill", |document| document.node_mut(second).map(|node| node.fills = vec![Paint::solid(red)])).unwrap();
+        // Once the canvas has drawn it, the middle of the second one is red.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while app.canvas.sample((250.0, 70.0).into()) != Some(egui::Color32::from_rgb(230, 57, 70)) {
+            assert!(std::time::Instant::now() < deadline, "the canvas never drew the red rectangle");
+            frame(&ctx, &mut app, vec![]);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(app.canvas.sample((-5000.0, 0.0).into()), None, "off the edge of what was drawn");
+
+        app.tools.selection = vec![first];
+        frame(&ctx, &mut app, key(Key::I, Modifiers::NONE));
+        assert_eq!(app.tools.tool, Tool::Eyedropper);
+        let at = canvas.min + vec2(250.0, 70.0);
+        let button = |pressed| Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
+        frame(&ctx, &mut app, vec![Event::PointerMoved(at)]);
+        frame(&ctx, &mut app, vec![button(true)]);
+        frame(&ctx, &mut app, vec![button(false)]);
+        let document = app.history.document();
+        assert_eq!(document.node(first).unwrap().fills, [Paint::solid(red)]);
+        // The click selected and moved nothing, and the tool is Move again.
+        assert_eq!((app.tools.selection.clone(), app.tools.tool, app.history.undo_name()), (vec![first], Tool::Move, Some("Fill")));
     }
 
     #[test]

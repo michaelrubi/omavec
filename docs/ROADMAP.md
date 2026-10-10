@@ -253,10 +253,12 @@ reopen and export.
   The Design panel has a frame's or rectangle's corner radius and whether
   a frame clips, an ellipse's start, sweep and ratio (which make it a pie
   slice or a ring), a polygon's count, and a star's count and ratio. The
-  outlines are `omavec_geom::shapes`. Left: frame presets, a radius for
-  each corner in the panel (the file and the renderer have them), rounded
-  corners on polygons and stars, and handles on the canvas for radius and
-  arc.
+  outlines are `omavec_geom::shapes`. A frame's size can be picked from
+  presets (phones, tablets, laptops, and a few for icons and logos).
+  Left: a frame made at a preset's size straight from the Frame tool; a
+  radius for each corner in the panel (the file and the renderer have
+  them); rounded corners on polygons and stars; and handles on the canvas
+  for radius and arc.
 - Paint: solid fills and strokes, multiple fills, opacity, blend modes;
   linear/radial/angular/diamond gradients with on-canvas handles; the
   colour picker with eyedropper. Built so far: a stack of solid fills per
@@ -276,9 +278,12 @@ reopen and export.
   a colour into one and back, and has the stops and a linear one's angle.
   A node has a blend mode, one of Figma's sixteen, drawn as a layer and
   written to SVG as `mix-blend-mode`.
+  The eyedropper (I) gives the selection the colour the canvas shows
+  under a click as its fill.
   Left: a blend mode for each paint, angular and diamond gradients (SVG
-  has neither), a gradient's handles on the canvas, the eyedropper,
-  dashes, and editing several nodes at once.
+  has neither), a gradient's handles on the canvas, an eyedropper in the
+  colour picker itself and for strokes, dashes, and editing several nodes
+  at once.
   A node's opacity fades the whole of it as one layer, and a frame that
   clips hides what its children draw outside it, on the canvas and in
   exported PNG and SVG alike.

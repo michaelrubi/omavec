@@ -19,13 +19,16 @@ pub enum Tool {
     Star,
     Line,
     Arrow,
+    /// A click takes the colour under it for the selection's fill. The app
+    /// does it, as it has the pixels; the tools see nothing.
+    Eyedropper,
 }
 
 impl Tool {
     /// What the tool draws, if it draws, as Figma starts each off.
     fn draws(self) -> Option<NodeKind> {
         match self {
-            Tool::Move | Tool::Hand => None,
+            Tool::Move | Tool::Hand | Tool::Eyedropper => None,
             Tool::Frame => Some(NodeKind::Frame { clip: true }),
             Tool::Rectangle => Some(NodeKind::Rectangle),
             Tool::Ellipse => Some(NodeKind::Ellipse),

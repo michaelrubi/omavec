@@ -169,6 +169,28 @@ impl Param {
     }
 }
 
+/// Sizes to make a frame: Figma's most used devices, and a few for logos
+/// and icons.
+const PRESETS: [(&str, f64, f64); 12] = [
+    ("iPhone 16", 393.0, 852.0),
+    ("iPhone 16 Pro Max", 440.0, 956.0),
+    ("Android Compact", 412.0, 917.0),
+    ("iPad mini 8.3", 744.0, 1133.0),
+    ("iPad Pro 11\"", 834.0, 1194.0),
+    ("MacBook Air", 1280.0, 832.0),
+    ("MacBook Pro 14\"", 1512.0, 982.0),
+    ("Desktop", 1440.0, 1024.0),
+    ("Icon", 24.0, 24.0),
+    ("Favicon", 32.0, 32.0),
+    ("App icon", 1024.0, 1024.0),
+    ("Social card", 1200.0, 630.0),
+];
+
+/// The preset a frame of `size` is, if it is one.
+fn preset(size: omavec_geom::kurbo::Size) -> Option<&'static str> {
+    PRESETS.iter().find(|(_, width, height)| (*width, *height) == (size.width, size.height)).map(|(name, ..)| *name)
+}
+
 /// A change to one of a stack of paints: a node's fills, or its stroke's.
 #[derive(Clone, Debug, PartialEq)]
 enum PaintEdit {
@@ -421,8 +443,8 @@ impl Properties {
         let exported = node.exports.clone();
         let (values, fills, stroke) = (Field::ALL.map(|field| field.get(node)), node.fills.clone(), node.stroke.clone());
         let params: Vec<(Param, f64)> = Param::of(node).into_iter().map(|param| (param, param.get(node))).collect();
-        let blend = node.blend;
-        let mut mixed = blend;
+        let (blend, size) = (node.blend, node.size);
+        let (mut mixed, mut resized) = (blend, None);
         let (mut clip, mut clip_changed, line) = (if let NodeKind::Frame { clip } = node.kind { Some(clip) } else { None }, false, node.kind == NodeKind::Line);
         ui.label(&node.name);
         ui.add_space(4.0);
@@ -456,6 +478,15 @@ impl Properties {
                     ui.selectable_value(&mut mixed, blend, format!("{blend:?}"));
                 }
             });
+            if clip.is_some() {
+                egui::ComboBox::from_id_salt("preset").selected_text(preset(size).unwrap_or("Custom size")).show_ui(ui, |ui| {
+                    for (name, width, height) in PRESETS {
+                        if ui.selectable_label(preset(size) == Some(name), format!("{name}  {width} × {height}")).clicked() {
+                            resized = Some(omavec_geom::kurbo::Size::new(width, height));
+                        }
+                    }
+                });
+            }
             if let Some(mut clips) = clip
                 && ui.checkbox(&mut clips, "Clip content").changed()
             {
@@ -465,6 +496,9 @@ impl Properties {
         });
         if let Some((param, value)) = set {
             self.change(history, *id, "Shape", pointer_down, |node| param.set(node, value))?;
+        }
+        if let Some(size) = resized {
+            self.change(history, *id, "Resize", false, |node| node.size = size)?;
         }
         if mixed != blend {
             self.change(history, *id, "Blend Mode", false, |node| node.blend = mixed)?;
@@ -643,6 +677,18 @@ mod tests {
         assert_eq!((from, to), ((0.0, 0.5), (1.0, 0.5)));
         let (from, to) = at_angle(135.0);
         assert!((angle_of(from, to) - 135.0).abs() < 1e-9 && ((from.0 + to.0) / 2.0 - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_frame_knows_which_preset_it_is() {
+        use omavec_geom::kurbo::Size;
+        assert_eq!(preset(Size::new(393.0, 852.0)), Some("iPhone 16"));
+        assert_eq!(preset(Size::new(1024.0, 1024.0)), Some("App icon"));
+        assert_eq!(preset(Size::new(852.0, 393.0)), None, "on its side it is a size of its own");
+        // No two are the same size, or one would hide the other.
+        for (index, (_, width, height)) in PRESETS.iter().enumerate() {
+            assert!(!PRESETS[index + 1..].iter().any(|(_, w, h)| (w, h) == (width, height)));
+        }
     }
 
     #[test]

@@ -43,6 +43,7 @@ pub enum Command {
     StarTool,
     LineTool,
     ArrowTool,
+    EyedropperTool,
     ZoomIn,
     ZoomOut,
     ZoomTo100,
@@ -57,7 +58,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Command; 49] = [
+    pub const ALL: [Command; 50] = [
         Command::New,
         Command::Open,
         Command::OpenRecent,
@@ -96,6 +97,7 @@ impl Command {
         Command::StarTool,
         Command::LineTool,
         Command::ArrowTool,
+        Command::EyedropperTool,
         Command::ZoomIn,
         Command::ZoomOut,
         Command::ZoomTo100,
@@ -149,6 +151,7 @@ impl Command {
             Command::StarTool => "Star",
             Command::LineTool => "Line",
             Command::ArrowTool => "Arrow",
+            Command::EyedropperTool => "Eyedropper",
             Command::ZoomIn => "Zoom In",
             Command::ZoomOut => "Zoom Out",
             Command::ZoomTo100 => "Zoom to 100%",
@@ -203,6 +206,7 @@ impl Command {
             Command::EllipseTool => (Modifiers::NONE, Key::O),
             Command::LineTool => (Modifiers::NONE, Key::L),
             Command::ArrowTool => (Modifiers::SHIFT, Key::L),
+            Command::EyedropperTool => (Modifiers::NONE, Key::I),
             // Figma gives these no key.
             Command::PolygonTool | Command::StarTool | Command::OpenRecent => return None,
             Command::ZoomIn => (Modifiers::COMMAND, Key::Equals),

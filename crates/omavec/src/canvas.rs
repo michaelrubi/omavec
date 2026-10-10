@@ -64,7 +64,7 @@ struct Request {
 }
 
 struct Drawn {
-    image: ColorImage,
+    image: Arc<ColorImage>,
     view: View,
     took: Duration,
 }
@@ -87,7 +87,7 @@ fn worker() -> (Sender<Request>, Receiver<Drawn>) {
                 let [r, g, b, _] = request.backdrop.to_array();
                 let view = request.view.to_pixels(request.pixels_per_point);
                 let frame = renderer.render(&request.list, view, width, height, peniko::Color::from_rgb8(r, g, b));
-                let image = ColorImage::from_rgba_premultiplied([width.into(), height.into()], &frame.pixels);
+                let image = Arc::new(ColorImage::from_rgba_premultiplied([width.into(), height.into()], &frame.pixels));
                 if frames.send(Drawn { image, view: request.view, took: start.elapsed() }).is_err() {
                     return;
                 }
@@ -145,6 +145,9 @@ pub struct Canvas {
     asked: Option<(View, [u16; 2], Color32, u64)>,
     /// The newest frame, the view it was drawn for and how long it took.
     shown: Option<(TextureHandle, View, Duration)>,
+    /// That frame's pixels, for the eyedropper, and how many of them make
+    /// a point.
+    pixels: Option<(Arc<ColorImage>, f32)>,
     /// The canvas's size in points, as last laid out.
     size: Vec2,
     /// A document point to put in the middle once the size is known.
@@ -154,7 +157,7 @@ pub struct Canvas {
 impl Canvas {
     pub fn new(list: DisplayList, centre: Option<Point>) -> Self {
         let (requests, frames) = worker();
-        Self { view: View::default(), rulers: false, pixel_grid: true, readout: false, hand: false, hover: None, list: Arc::new(list), generation: 0, requests, frames, asked: None, shown: None, size: Vec2::ZERO, centre }
+        Self { view: View::default(), rulers: false, pixel_grid: true, readout: false, hand: false, hover: None, list: Arc::new(list), generation: 0, requests, frames, asked: None, shown: None, pixels: None, size: Vec2::ZERO, centre }
     }
 
     /// Draws `list` from now on.
@@ -172,6 +175,16 @@ impl Canvas {
             self.view.zoom = zoom.clamp(ZOOM_RANGE.0, ZOOM_RANGE.1);
             self.view.origin = self.size / 2.0 - area.center().to_vec2() * self.view.zoom;
         }
+    }
+
+    /// The colour drawn at `at` in the document, as the canvas last showed
+    /// it. `None` until a frame has been drawn, or off its edge.
+    pub fn sample(&self, at: Point) -> Option<Color32> {
+        let ((image, pixels_per_point), (_, drawn_for, _)) = (self.pixels.as_ref()?, self.shown.as_ref()?);
+        let pixel = drawn_for.to_pixels(*pixels_per_point) * at;
+        let [width, height] = image.size;
+        let inside = pixel.x >= 0.0 && pixel.y >= 0.0 && pixel.x < width as f64 && pixel.y < height as f64;
+        inside.then(|| image.pixels[pixel.y as usize * width + pixel.x as usize])
     }
 
     /// Zooms by `factor` about the middle of the canvas.
@@ -239,6 +252,8 @@ impl Canvas {
 
         if let Some(drawn) = self.frames.try_iter().last() {
             let options = TextureOptions::LINEAR;
+            // The texture and the eyedropper share the pixels.
+            self.pixels = Some((drawn.image.clone(), ui.ctx().pixels_per_point()));
             let texture = match self.shown.take() {
                 Some((mut texture, ..)) => {
                     texture.set(drawn.image, options);

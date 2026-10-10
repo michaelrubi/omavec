@@ -12,6 +12,7 @@ mod properties;
 mod recent;
 mod recovery;
 mod rulers;
+mod script;
 mod theme;
 mod tools;
 
@@ -31,6 +32,19 @@ fn main() -> eframe::Result {
                 eprintln!("omavec export: {error}");
                 std::process::exit(2);
             }
+        }
+        return Ok(());
+    }
+    // `omavec run "Frame 0 0 400 300,Export dist" [logo.omavec]` takes the
+    // steps of a script (see `script.rs`) with no window either.
+    if arguments.first().is_some_and(|first| first == "run") {
+        let Some(script) = arguments.get(1) else {
+            eprintln!("usage: omavec run \"Step,Step…\" [file.omavec]");
+            std::process::exit(2);
+        };
+        if let Err(error) = app::App::run_script(script, arguments.get(2).map(std::path::Path::new)) {
+            eprintln!("omavec run: {error}");
+            std::process::exit(2);
         }
         return Ok(());
     }

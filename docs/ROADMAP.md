@@ -318,7 +318,17 @@ reopen and export.
   picture is the size of the box; a suffix for each setting; layer names
   as ids in the SVG; `--node` in the CLI for something that isn't a
   top-level frame.
-- `OMAVEC_SCRIPT` replay and the egui `Harness` for UI tests.
+- ~~`OMAVEC_SCRIPT` replay and the egui `Harness` for UI tests.~~ (done)
+  A script is steps between commas: any `Command` by name, a tool and
+  where to drag it (`Rectangle 20 20 100 80`, `Line 0 0 30 40`), `Click`
+  and `Drag` on the page, and `Open`, `Save` and `Export` with a path.
+  `OMAVEC_SCRIPT="…" omavec` takes them a step a frame in the window;
+  `omavec run "…" [file.omavec]` takes them with no window and stops at
+  the first that goes wrong. The pointer's steps go to the tools exactly
+  as the pointer's do. UI tests drive a headless `egui::Context` frame by
+  frame (`app.rs`, `canvas.rs`, `layers_panel.rs`).
+  Later: steps for what the Design panel sets (fill, stroke, radius), so
+  a script can style what it draws.
 - Command palette (Ctrl+K, Ctrl+/) listing every `Command`, and `:` to
   open it as a command line.
 

@@ -13,6 +13,7 @@ use crate::layers_panel::{self, LayersPanel};
 use crate::properties::Properties;
 use crate::recent::{self, Recent};
 use crate::recovery::{self, Left, Recovery};
+use crate::script::{self, Step};
 use crate::theme::{self, Theme};
 use crate::tools::{Grab, Keys, Tool, Tools};
 
@@ -65,6 +66,10 @@ pub struct App {
     /// The document Open Recent is to open, picked from its menu.
     reopen: Option<PathBuf>,
     recovery: Recovery,
+    /// There is no window, so nothing can be asked: `omavec run`.
+    windowless: bool,
+    /// What is left of `OMAVEC_SCRIPT`, taken a step a frame.
+    script: std::collections::VecDeque<Step>,
     /// A copy of unsaved changes that a session before this one left, and
     /// the question of what to do with it not yet answered.
     left: Option<Left>,
@@ -100,12 +105,18 @@ impl App {
         if let Some(path) = &open {
             app.open(path);
         }
+        match std::env::var("OMAVEC_SCRIPT").as_deref().map(script::parse) {
+            Ok(Ok(steps)) => app.script = steps.into(),
+            Ok(Err(error)) => app.say(format!("OMAVEC_SCRIPT: {error}"), true),
+            Err(_) => {}
+        }
         // Changes a session before this one never saved: to the document
         // being opened, or with none asked for, the latest there are.
         let left = app.recovery.left();
         app.left = match &app.path {
             Some(path) => left.into_iter().find(|left| left.path.as_ref() == Some(path)),
-            None if open.is_none() => left.into_iter().next(),
+            // A script is not to be kept waiting for an answer.
+            None if open.is_none() && app.script.is_empty() => left.into_iter().next(),
             None => None,
         };
         app
@@ -122,7 +133,7 @@ impl App {
         canvas.readout = blobs.is_some();
         let document = Document::default();
         let page = document.pages[0].id;
-        Self { theme, theme_rx: None, show_ui: true, canvas, history: History::new(document), tools: Tools::default(), layers: LayersPanel::default(), properties: Properties::default(), page, drawn: None, spike: blobs.is_some(), path: None, dialog: None, status: None, title: String::new(), confirm: None, after_save: None, closing: false, clipboard: Clipboard::default(), v_down: false, recent: Recent::default(), reopen: None, recovery: Recovery::new(None, std::process::id()), left: None }
+        Self { theme, theme_rx: None, show_ui: true, canvas, history: History::new(document), tools: Tools::default(), layers: LayersPanel::default(), properties: Properties::default(), page, drawn: None, spike: blobs.is_some(), path: None, dialog: None, status: None, title: String::new(), confirm: None, after_save: None, closing: false, clipboard: Clipboard::default(), v_down: false, recent: Recent::default(), reopen: None, recovery: Recovery::new(None, std::process::id()), left: None, windowless: false, script: Default::default() }
     }
 
     fn say(&mut self, message: impl Into<String>, wrong: bool) {
@@ -223,6 +234,9 @@ impl App {
 
     /// Opens a file dialog off the UI thread; `answer` takes what it returns.
     fn ask(&mut self, command: Command, ctx: &egui::Context) {
+        if self.windowless {
+            return self.say(format!("{} needs a path here: there is no window to ask in", command.label()), true);
+        }
         if self.dialog.is_some() {
             return;
         }
@@ -528,6 +542,55 @@ impl App {
         }
     }
 
+    /// Takes one step of a script: the pointer's steps go to the tools as
+    /// the pointer's own do, in page coordinates whatever the view.
+    fn step(&mut self, step: Step, ctx: &egui::Context) {
+        let stroke = |app: &mut Self, from: Point, to: Option<Point>| {
+            let keys = Keys::default();
+            app.tools.press(&app.history, app.page, from, keys);
+            let dragged = to.map_or(Ok(()), |to| app.tools.drag(&mut app.history, to, keys));
+            let done = dragged.and_then(|()| app.tools.release(&mut app.history));
+            app.check(done);
+        };
+        match step {
+            // Whoever wrote Quit into a script isn't there to be asked.
+            Step::Run(Command::Quit) => self.proceed(Command::Quit, ctx),
+            Step::Run(command) => self.run(command, ctx),
+            Step::Draw(tool, from, to) => {
+                self.run(tool, ctx);
+                stroke(self, from, Some(to));
+            }
+            Step::Click(at) => stroke(self, at, None),
+            Step::Drag(from, to) => stroke(self, from, Some(to)),
+            Step::Open(path) => self.open(&path),
+            Step::Save(path) => self.save_to(&path),
+            Step::Export(folder) => self.export_to(&folder),
+        }
+    }
+
+    /// `omavec run`: takes every step of `script` with no window, on the
+    /// document at `open` if there is one. Stops at the first that goes wrong.
+    pub fn run_script(script: &str, open: Option<&Path>) -> Result<(), String> {
+        let steps = script::parse(script)?;
+        let ctx = egui::Context::default();
+        let mut app = Self::with_theme(Theme::default(), None);
+        app.windowless = true;
+        let went_wrong = |app: &Self| app.status.as_ref().filter(|(_, wrong)| *wrong).map(|(message, _)| message.clone());
+        if let Some(path) = open {
+            app.open(path);
+        }
+        for step in steps {
+            if let Some(message) = went_wrong(&app) {
+                return Err(message);
+            }
+            if app.closing {
+                break;
+            }
+            app.step(step, &ctx);
+        }
+        went_wrong(&app).map_or(Ok(()), Err)
+    }
+
     /// What to do with the unsaved changes a session before this one left.
     fn recover(&mut self, bring_back: bool) {
         let Some(left) = self.left.take() else { return };
@@ -733,6 +796,14 @@ impl eframe::App for App {
             self.confirm = Some(Command::Quit);
         }
         self.keys(ctx);
+        // A script goes on while there is nothing to answer first.
+        if self.confirm.is_none()
+            && self.dialog.is_none()
+            && let Some(step) = self.script.pop_front()
+        {
+            self.step(step, ctx);
+            ctx.request_repaint();
+        }
         self.update_title(ctx);
         // A copy of unsaved changes, in case this session never saves them.
         self.recovery.keep(&self.history, self.path.as_deref(), std::time::Instant::now());
@@ -1125,6 +1196,62 @@ mod tests {
         app.run(Command::OpenRecent, &ctx);
         assert!(app.status.as_ref().is_some_and(|(message, wrong)| *wrong && message.starts_with("Couldn't open")));
         assert_eq!(names(&app), ["One"]);
+        let _ = std::fs::remove_dir_all(folder);
+    }
+
+    #[test]
+    fn a_script_draws_arranges_and_exports_as_a_hand_would() {
+        let folder = std::env::temp_dir().join(format!("omavec-script-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        let (ctx, mut app, _) = app();
+        let out = folder.join("out");
+        let text = format!("Frame 0 0 400 300,Rectangle 20 20 100 80,Ellipse 200 100 60 60,Click 50 50,Drag 50 50 60 70,Duplicate,Line 10 250 110 250,Click 900 900,Export {},Save {}", out.display(), folder.join("Made.omavec").display());
+        for step in script::parse(&text).unwrap() {
+            app.step(step, &ctx);
+        }
+        assert_eq!(app.status, Some(("Saved Made".into(), false)));
+        let document = app.history.document();
+        let [frame] = &document.node(app.page).unwrap().children[..] else { panic!() };
+        // The rectangle moved by (10, 20) and its copy are in the frame, with
+        // the ellipse between them and the line on top.
+        let inside: Vec<(NodeKind, Rect)> = frame.children.iter().map(|node| (node.kind.clone(), document.area(&[node.id]).unwrap())).collect();
+        assert_eq!(
+            inside,
+            [
+                (NodeKind::Rectangle, Rect::new(30.0, 40.0, 130.0, 120.0)),
+                (NodeKind::Rectangle, Rect::new(30.0, 40.0, 130.0, 120.0)),
+                (NodeKind::Ellipse, Rect::new(200.0, 100.0, 260.0, 160.0)),
+                (NodeKind::Line, Rect::new(10.0, 250.0, 110.0, 250.0)),
+            ]
+        );
+        // Nothing was selected when it exported: the frame.
+        assert!(out.join("Frame.png").exists());
+        assert_eq!(&file::open(&folder.join("Made.omavec")).unwrap(), document);
+        // Quit in a script doesn't stop to ask.
+        app.step(Step::Run(Command::ArrowTool), &ctx);
+        app.step(Step::Draw(Command::RectangleTool, Point::new(500.0, 0.0), Point::new(520.0, 20.0)), &ctx);
+        app.step(Step::Run(Command::Quit), &ctx);
+        assert!(app.closing && app.confirm.is_none());
+        let _ = std::fs::remove_dir_all(folder);
+    }
+
+    #[test]
+    fn a_script_runs_with_no_window_and_stops_at_what_goes_wrong() {
+        let folder = std::env::temp_dir().join(format!("omavec-run-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        let made = folder.join("Made.omavecz");
+        std::fs::create_dir_all(&folder).unwrap();
+        App::run_script(&format!("Frame 0 0 40 30,Save {},Quit,Rectangle 0 0 10 10", made.display()), None).unwrap();
+        // On a document that is there already; nothing after Quit happens.
+        App::run_script(&format!("Ellipse 5 5 20 20,Export {}", folder.join("out").display()), Some(&made)).unwrap();
+        // What was drawn last is selected, so that is what Export exports.
+        assert!(folder.join("out/Ellipse.png").exists());
+        assert_eq!(file::open(&made).unwrap().pages[0].children[0].children.len(), 0, "the ellipse was never saved");
+        // Whatever would ask in a window says so instead.
+        assert_eq!(App::run_script("SaveAs", None), Err("Save As… needs a path here: there is no window to ask in".into()));
+        assert_eq!(App::run_script("Explode", None), Err("\"Explode\" is not a step".into()));
+        assert!(App::run_script("Undo", Some(&folder.join("nowhere.omavecz"))).unwrap_err().starts_with("Couldn't open"));
+        assert!(App::run_script(&format!("Rectangle 0 0 10 10,Save {},Undo", folder.join("out/Ellipse.png/x.omavecz").display()), None).unwrap_err().starts_with("Couldn't save"));
         let _ = std::fs::remove_dir_all(folder);
     }
 

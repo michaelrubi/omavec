@@ -337,6 +337,7 @@ Variables, styles, assets and the thumbnail aren't written yet.
 omavec file.omavec                                   open in the app
 omavec export file.omavec --frame Logo --format svg,png@2x --out dist/
 omavec export file.omavec --out dist/                every frame, as its export settings say
+omavec run "Frame 0 0 400 300,Export dist" [file]    a script's steps, with no window
 omavec import design.fig --out design.omavec         .fig conversion + report
 omavec tokens file.omavec --format css|tailwind|omarchy
 ```
